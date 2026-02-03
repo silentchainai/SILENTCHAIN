@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SILENTCHAIN AI - AI-Powered Security Testing for Burp Suite</title>
+    <meta name="description" content="Transform your Burp Suite workflow with AI-powered vulnerability detection. SILENTCHAIN AI combines advanced language models with OWASP Top 10 testing for intelligent, context-aware security analysis.">
+    <meta name="keywords" content="burp suite, ai security, vulnerability scanner, penetration testing, red team, owasp, bug bounty, web security, ai pentesting, burp extension">
+    
+    <!-- Open Graph / Social Media -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="SILENTCHAIN AI - AI-Powered Security Testing">
+    <meta property="og:description" content="Free AI-powered vulnerability detection for Burp Suite. Detect OWASP Top 10 with context-aware analysis.">
+    <meta property="og:image" content="https://silentchain.ai/og-image.png">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🔗</text></svg>">
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@700;800&display=swap');
+        
+        :root {
+            --bg-dark: #0a0e27;
+            --bg-darker: #05080f;
+            --accent-blue: #00d4ff;
+            --accent-purple: #b026ff;
+            --accent-green: #00ff88;
+            --text-light: #e0e6ed;
+            --text-muted: #8892a6;
+            --card-bg: rgba(20, 30, 60, 0.6);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg-dark);
+            color: var(--text-light);
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+        
+        /* Animated Background */
+        .background-grid {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            animation: gridMove 20s linear infinite;
+            pointer-events: none;
+            z-index: 0;
+        }
+        
+        @keyframes gridMove {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(50px, 50px); }
+        }
+        
+        .glow-orb {
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.15;
+            pointer-events: none;
+            z-index: 1;
+        }
+        
+        .orb-1 {
+            background: var(--accent-blue);
+            top: -300px;
+            left: -300px;
+            animation: float 20s ease-in-out infinite;
+        }
+        
+        .orb-2 {
+            background: var(--accent-purple);
+            bottom: -300px;
+            right: -300px;
+            animation: float 25s ease-in-out infinite reverse;
+        }
+        
+        .orb-3 {
+            background: var(--accent-green);
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            animation: pulse 15s ease-in-out infinite;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translate(0, 0); }
+            50% { transform: translate(100px, 100px); }
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 0.1; transform: translate(-50%, -50%) scale(1); }
+            50% { opacity: 0.2; transform: translate(-50%, -50%) scale(1.2); }
+        }
+        
+        /* Content Container */
+        .container {
+            position: relative;
+            z-index: 10;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 40px;
+        }
+        
+        /* Navigation */
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 30px 0;
+            border-bottom: 1px solid rgba(0, 212, 255, 0.1);
+        }
+        
+        .logo {
+            font-family: 'Syne', sans-serif;
+            font-weight: 800;
+            font-size: 28px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -1px;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 40px;
+            list-style: none;
+        }
+        
+        .nav-links a {
+            color: var(--text-light);
+            text-decoration: none;
+            font-size: 14px;
+            transition: color 0.3s;
+        }
+        
+        .nav-links a:hover {
+            color: var(--accent-blue);
+        }
+        
+        .cta-button {
+            padding: 12px 30px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            transition: transform 0.3s, box-shadow 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .cta-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(0, 212, 255, 0.3);
+        }
+        
+        /* Hero Section */
+        .hero {
+            padding: 120px 0;
+            text-align: center;
+        }
+        
+        .hero-badge {
+            display: inline-block;
+            padding: 8px 20px;
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 50px;
+            color: var(--accent-blue);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 30px;
+            animation: fadeInUp 0.8s ease-out;
+        }
+        
+        h1 {
+            font-family: 'Syne', sans-serif;
+            font-weight: 800;
+            font-size: 72px;
+            line-height: 1.1;
+            margin-bottom: 30px;
+            background: linear-gradient(135deg, #ffffff, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: fadeInUp 0.8s ease-out 0.2s both;
+        }
+        
+        .hero-description {
+            font-size: 20px;
+            color: var(--text-muted);
+            max-width: 700px;
+            margin: 0 auto 50px;
+            animation: fadeInUp 0.8s ease-out 0.4s both;
+        }
+        
+        .hero-buttons {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            animation: fadeInUp 0.8s ease-out 0.6s both;
+        }
+        
+        .secondary-button {
+            padding: 12px 30px;
+            background: transparent;
+            color: var(--text-light);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .secondary-button:hover {
+            background: rgba(0, 212, 255, 0.1);
+            border-color: var(--accent-blue);
+        }
+        
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        /* Stats Section */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 30px;
+            margin: 80px 0;
+            padding: 60px 0;
+            border-top: 1px solid rgba(0, 212, 255, 0.1);
+            border-bottom: 1px solid rgba(0, 212, 255, 0.1);
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-family: 'Syne', sans-serif;
+            font-size: 48px;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        
+        /* Features Section */
+        .features {
+            padding: 100px 0;
+        }
+        
+        .section-header {
+            text-align: center;
+            margin-bottom: 80px;
+        }
+        
+        .section-tag {
+            color: var(--accent-blue);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        h2 {
+            font-family: 'Syne', sans-serif;
+            font-size: 48px;
+            font-weight: 800;
+            margin: 20px 0;
+        }
+        
+        .section-description {
+            color: var(--text-muted);
+            font-size: 18px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 30px;
+        }
+        
+        .feature-card {
+            background: var(--card-bg);
+            border: 1px solid rgba(0, 212, 255, 0.1);
+            border-radius: 16px;
+            padding: 40px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--accent-blue);
+            box-shadow: 0 10px 40px rgba(0, 212, 255, 0.2);
+        }
+        
+        .feature-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        
+        .feature-card h3 {
+            font-family: 'Syne', sans-serif;
+            font-size: 24px;
+            margin-bottom: 15px;
+        }
+        
+        .feature-card p {
+            color: var(--text-muted);
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        
+        /* Code Example Section */
+        .code-example {
+            padding: 100px 0;
+            background: rgba(5, 8, 15, 0.5);
+        }
+        
+        .code-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 60px;
+            align-items: center;
+        }
+        
+        .code-terminal {
+            background: #0d1117;
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+        
+        .terminal-header {
+            background: #161b22;
+            padding: 15px 20px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        
+        .terminal-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .dot-red { background: #ff5f56; }
+        .dot-yellow { background: #ffbd2e; }
+        .dot-green { background: #27c93f; }
+        
+        .terminal-body {
+            padding: 30px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.8;
+        }
+        
+        .terminal-line {
+            margin-bottom: 10px;
+        }
+        
+        .terminal-prompt {
+            color: var(--accent-green);
+        }
+        
+        .terminal-command {
+            color: var(--accent-blue);
+        }
+        
+        .terminal-output {
+            color: var(--text-muted);
+        }
+        
+        /* Comparison Table */
+        .comparison {
+            padding: 100px 0;
+        }
+        
+        .comparison-table {
+            background: var(--card-bg);
+            border: 1px solid rgba(0, 212, 255, 0.1);
+            border-radius: 16px;
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+        }
+        
+        .table-header {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            background: rgba(0, 212, 255, 0.05);
+            padding: 30px;
+            font-weight: 700;
+            border-bottom: 1px solid rgba(0, 212, 255, 0.1);
+        }
+        
+        .table-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            padding: 25px 30px;
+            border-bottom: 1px solid rgba(0, 212, 255, 0.05);
+            transition: background 0.3s;
+        }
+        
+        .table-row:hover {
+            background: rgba(0, 212, 255, 0.03);
+        }
+        
+        .table-row:last-child {
+            border-bottom: none;
+        }
+        
+        .check-icon {
+            color: var(--accent-green);
+            font-size: 20px;
+        }
+        
+        .cross-icon {
+            color: var(--text-muted);
+            font-size: 20px;
+        }
+        
+        /* CTA Section */
+        .final-cta {
+            padding: 120px 0;
+            text-align: center;
+        }
+        
+        .cta-box {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(176, 38, 255, 0.1));
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 24px;
+            padding: 80px 60px;
+            backdrop-filter: blur(20px);
+        }
+        
+        .cta-box h2 {
+            margin-bottom: 20px;
+        }
+        
+        .cta-box p {
+            color: var(--text-muted);
+            font-size: 18px;
+            margin-bottom: 40px;
+        }
+        
+        /* Footer */
+        footer {
+            border-top: 1px solid rgba(0, 212, 255, 0.1);
+            padding: 60px 0 40px;
+            margin-top: 100px;
+        }
+        
+        .footer-content {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 60px;
+            margin-bottom: 40px;
+        }
+        
+        .footer-section h4 {
+            font-family: 'Syne', sans-serif;
+            margin-bottom: 20px;
+        }
+        
+        .footer-links {
+            list-style: none;
+        }
+        
+        .footer-links li {
+            margin-bottom: 12px;
+        }
+        
+        .footer-links a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 14px;
+            transition: color 0.3s;
+        }
+        
+        .footer-links a:hover {
+            color: var(--accent-blue);
+        }
+        
+        .footer-bottom {
+            padding-top: 30px;
+            border-top: 1px solid rgba(0, 212, 255, 0.05);
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 1200px) {
+            .features-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 48px;
+            }
+            
+            .features-grid,
+            .stats {
+                grid-template-columns: 1fr;
+            }
+            
+            .code-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .table-header,
+            .table-row {
+                grid-template-columns: 1fr;
+                gap: 15px;
+            }
+            
+            .footer-content {
+                grid-template-columns: 1fr;
+            }
+            
+            .hero-buttons {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Background Effects -->
+    <div class="background-grid"></div>
+    <div class="glow-orb orb-1"></div>
+    <div class="glow-orb orb-2"></div>
+    <div class="glow-orb orb-3"></div>
+    
+    <!-- Navigation -->
+    <div class="container">
+        <nav>
+            <div class="logo">SILENTCHAIN AI</div>
+            <ul class="nav-links">
+                <li><a href="#features">Features</a></li>
+                <li><a href="#docs">Documentation</a></li>
+                <li><a href="#pricing">Pricing</a></li>
+                <li><a href="https://github.com/yourusername/silentchain-ai">GitHub</a></li>
+            </ul>
+            <a href="#download" class="cta-button">Download Free</a>
+        </nav>
+    </div>
+    
+    <!-- Hero Section -->
+    <div class="container">
+        <section class="hero">
+            <div class="hero-badge">🔗 Open Source • AI-Powered • Free</div>
+            <h1>Security Testing<br>Meets Artificial<br>Intelligence</h1>
+            <p class="hero-description">
+                Transform your Burp Suite workflow with AI-powered vulnerability detection. 
+                SILENTCHAIN combines advanced language models with OWASP Top 10 testing 
+                for intelligent, context-aware security analysis.
+            </p>
+            <div class="hero-buttons">
+                <a href="https://github.com/yourusername/silentchain-ai/releases" class="cta-button">
+                    Download Community Edition
+                </a>
+                <a href="#demo" class="secondary-button">
+                    Watch Demo
+                </a>
+            </div>
+        </section>
+        
+        <!-- Stats -->
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-number">100%</div>
+                <div class="stat-label">Free & Open Source</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">4+</div>
+                <div class="stat-label">AI Providers Supported</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">OWASP</div>
+                <div class="stat-label">Top 10 Coverage</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">Zero</div>
+                <div class="stat-label">Configuration Required</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Features Section -->
+    <div class="container">
+        <section id="features" class="features">
+            <div class="section-header">
+                <div class="section-tag">FEATURES</div>
+                <h2>Built for Modern<br>Security Professionals</h2>
+                <p class="section-description">
+                    Every feature designed to enhance your workflow, from real-time analysis to intelligent reporting.
+                </p>
+            </div>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🧠</div>
+                    <h3>AI-Powered Analysis</h3>
+                    <p>
+                        Leverage state-of-the-art language models (Ollama, GPT-4, Claude, Gemini) 
+                        for context-aware vulnerability detection that goes beyond pattern matching.
+                    </p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>Real-Time Scanning</h3>
+                    <p>
+                        Automatic passive analysis of all HTTP traffic flowing through Burp Proxy. 
+                        Findings appear instantly in your dashboard and issue activity.
+                    </p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🎯</div>
+                    <h3>OWASP Top 10</h3>
+                    <p>
+                        Complete coverage of OWASP Top 10 vulnerabilities including injection, 
+                        XSS, authentication issues, access control flaws, and misconfigurations.
+                    </p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>Professional Reporting</h3>
+                    <p>
+                        Detailed findings with CWE mappings, OWASP references, severity ratings, 
+                        confidence scores, and actionable remediation guidance.
+                    </p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>Privacy-First</h3>
+                    <p>
+                        Use Ollama for 100% local processing with zero external communication. 
+                        Your target data never leaves your machine.
+                    </p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🎨</div>
+                    <h3>Modern UI</h3>
+                    <p>
+                        Intuitive dashboard with live task tracking, findings management, 
+                        color-coded severity levels, and integrated console logging.
+                    </p>
+                </div>
+            </div>
+        </section>
+    </div>
+    
+    <!-- Code Example Section -->
+    <section class="code-example">
+        <div class="container">
+            <div class="code-grid">
+                <div>
+                    <h2>Get Started in<br>3 Simple Steps</h2>
+                    <p class="section-description" style="margin: 30px 0; text-align: left;">
+                        No complex configuration. No API keys required (with Ollama). 
+                        Just install and start scanning.
+                    </p>
+                    <ul style="list-style: none; padding: 0;">
+                        <li style="padding: 15px 0; border-bottom: 1px solid rgba(0, 212, 255, 0.1);">
+                            <strong style="color: var(--accent-blue);">01.</strong> 
+                            Load extension in Burp Suite
+                        </li>
+                        <li style="padding: 15px 0; border-bottom: 1px solid rgba(0, 212, 255, 0.1);">
+                            <strong style="color: var(--accent-blue);">02.</strong> 
+                            Configure AI provider (Ollama recommended)
+                        </li>
+                        <li style="padding: 15px 0;">
+                            <strong style="color: var(--accent-blue);">03.</strong> 
+                            Start browsing your target
+                        </li>
+                    </ul>
+                </div>
+                
+                <div class="code-terminal">
+                    <div class="terminal-header">
+                        <span class="terminal-dot dot-red"></span>
+                        <span class="terminal-dot dot-yellow"></span>
+                        <span class="terminal-dot dot-green"></span>
+                    </div>
+                    <div class="terminal-body">
+                        <div class="terminal-line">
+                            <span class="terminal-prompt">$</span>
+                            <span class="terminal-command"> ollama pull llama3</span>
+                        </div>
+                        <div class="terminal-line">
+                            <span class="terminal-output">pulling manifest...</span>
+                        </div>
+                        <div class="terminal-line">
+                            <span class="terminal-output">✓ llama3 ready</span>
+                        </div>
+                        <div class="terminal-line" style="margin-top: 20px;">
+                            <span class="terminal-prompt">$</span>
+                            <span class="terminal-command"> burp</span>
+                        </div>
+                        <div class="terminal-line">
+                            <span class="terminal-output">Loading SILENTCHAIN AI...</span>
+                        </div>
+                        <div class="terminal-line">
+                            <span class="terminal-output">✓ AI Connection: Ollama (llama3)</span>
+                        </div>
+                        <div class="terminal-line">
+                            <span class="terminal-output">✓ Extension Loaded</span>
+                        </div>
+                        <div class="terminal-line" style="margin-top: 20px;">
+                            <span class="terminal-output">[HTTP] Analyzing: https://target.com/api/user</span>
+                        </div>
+                        <div class="terminal-line">
+                            <span class="terminal-output">[AI] Detected: SQL Injection (High)</span>
+                        </div>
+                        <div class="terminal-line">
+                            <span class="terminal-output">✓ Finding Created</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <!-- Comparison Table -->
+    <div class="container">
+        <section id="pricing" class="comparison">
+            <div class="section-header">
+                <div class="section-tag">EDITIONS</div>
+                <h2>Choose Your Edition</h2>
+                <p class="section-description">
+                    Start free with Community Edition. Upgrade to Professional for active verification.
+                </p>
+            </div>
+            
+            <div class="comparison-table">
+                <div class="table-header">
+                    <div>Feature</div>
+                    <div>Community</div>
+                    <div>Professional</div>
+                </div>
+                <div class="table-row">
+                    <div>AI-Powered Passive Analysis</div>
+                    <div><span class="check-icon">✓</span></div>
+                    <div><span class="check-icon">✓</span></div>
+                </div>
+                <div class="table-row">
+                    <div>OWASP Top 10 Detection</div>
+                    <div><span class="check-icon">✓</span></div>
+                    <div><span class="check-icon">✓</span></div>
+                </div>
+                <div class="table-row">
+                    <div>Multi-AI Provider Support</div>
+                    <div><span class="check-icon">✓</span></div>
+                    <div><span class="check-icon">✓</span></div>
+                </div>
+                <div class="table-row">
+                    <div>Professional UI & Reporting</div>
+                    <div><span class="check-icon">✓</span></div>
+                    <div><span class="check-icon">✓</span></div>
+                </div>
+                <div class="table-row">
+                    <div>Phase 2 Active Verification</div>
+                    <div><span class="cross-icon">✗</span></div>
+                    <div><span class="check-icon">✓</span></div>
+                </div>
+                <div class="table-row">
+                    <div>WAF Detection & Evasion</div>
+                    <div><span class="cross-icon">✗</span></div>
+                    <div><span class="check-icon">✓</span></div>
+                </div>
+                <div class="table-row">
+                    <div>Advanced Payload Libraries</div>
+                    <div><span class="cross-icon">✗</span></div>
+                    <div><span class="check-icon">✓</span></div>
+                </div>
+                <div class="table-row">
+                    <div>Out-of-Band (OOB) Testing</div>
+                    <div><span class="cross-icon">✗</span></div>
+                    <div><span class="check-icon">✓</span></div>
+                </div>
+                <div class="table-row">
+                    <div>Burp Intruder Integration</div>
+                    <div><span class="cross-icon">✗</span></div>
+                    <div><span class="check-icon">✓</span></div>
+                </div>
+                <div class="table-row">
+                    <div>Priority Support</div>
+                    <div><span class="cross-icon">✗</span></div>
+                    <div><span class="check-icon">✓</span></div>
+                </div>
+                <div class="table-row">
+                    <div style="font-weight: 700;">Price</div>
+                    <div style="font-weight: 700; color: var(--accent-green);">FREE</div>
+                    <div style="font-weight: 700; color: var(--accent-blue);">Contact Sales</div>
+                </div>
+            </div>
+        </section>
+    </div>
+    
+    <!-- Final CTA -->
+    <div class="container">
+        <section class="final-cta">
+            <div class="cta-box">
+                <h2>Ready to Transform<br>Your Security Testing?</h2>
+                <p>Join thousands of security professionals using SILENTCHAIN AI</p>
+                <div style="display: flex; gap: 20px; justify-content: center;">
+                    <a href="https://github.com/yourusername/silentchain-ai" class="cta-button">
+                        Get Started Free
+                    </a>
+                    <a href="mailto:sales@silentchain.ai" class="secondary-button">
+                        Contact Sales
+                    </a>
+                </div>
+            </div>
+        </section>
+    </div>
+    
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <div class="logo" style="margin-bottom: 20px;">SILENTCHAIN AI</div>
+                    <p style="color: var(--text-muted); font-size: 14px;">
+                        AI-powered security testing for the modern web. 
+                        Open source, privacy-focused, and built for professionals.
+                    </p>
+                </div>
+                
+                <div class="footer-section">
+                    <h4>Product</h4>
+                    <ul class="footer-links">
+                        <li><a href="#features">Features</a></li>
+                        <li><a href="#pricing">Pricing</a></li>
+                        <li><a href="/docs">Documentation</a></li>
+                        <li><a href="/changelog">Changelog</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-section">
+                    <h4>Resources</h4>
+                    <ul class="footer-links">
+                        <li><a href="https://github.com/yourusername/silentchain-ai">GitHub</a></li>
+                        <li><a href="/docs/installation">Installation Guide</a></li>
+                        <li><a href="/docs/api">API Reference</a></li>
+                        <li><a href="/blog">Blog</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-section">
+                    <h4>Company</h4>
+                    <ul class="footer-links">
+                        <li><a href="/about">About</a></li>
+                        <li><a href="mailto:contact@silentchain.ai">Contact</a></li>
+                        <li><a href="/privacy">Privacy</a></li>
+                        <li><a href="/terms">Terms</a></li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="footer-bottom">
+                <p>&copy; 2025 SILENTCHAIN AI. Released under MIT License. Built with ❤️ for the security community.</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
