@@ -1,6 +1,6 @@
-# Changelog - SILENTCHAIN AI Community Edition
+# Changelog - SILENTCHAIN AI™ Community Edition
 
-All notable changes to the SILENTCHAIN AI Community Edition will be documented in this file.
+All notable changes to the SILENTCHAIN AI™ Community Edition will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -13,6 +13,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Export findings to PDF/HTML reports
 - Integration with CI/CD pipelines
 - Custom vulnerability templates
+
+---
+
+## [1.1.3] - 2026-02-08
+
+### Changed
+- **UI title updated** - Now displays "SILENTCHAIN AI™ - Community Edition v1.1.3" with trademark symbol and version number
+- **Updated slogan** - Changed from "AI-Powered Security Scanner" to "AI-Powered OWASP Top 10 Vulnerability Scanning for Burp Suite"
+- **Button colors removed** - All control buttons (Settings, Cancel All, Pause All, Upgrade to Professional, Run Task Diagnostics) now use default system theme colors instead of custom colored backgrounds
+- **"Check for Updates" renamed to "Upgrade to Professional"** - Clearer call-to-action for edition upgrade
+- **"Default" console theme removed** - Simplified theme options to "Light" and "Dark" only
+  - "Light" theme is now the default for new installations
+  - Existing configs with "Default" theme are automatically migrated to "Light"
+
+### Technical Details
+- Removed `setBackground()` and `setForeground()` calls from 5 buttons: Settings, Cancel All, Pause All, Upgrade, Debug Tasks
+- Theme combo options reduced from `["Default", "Dark", "Light"]` to `["Light", "Dark"]`
+- `applyConsoleTheme()` simplified to two branches (Dark/Light) instead of three
+- `load_config()` now validates saved theme value and falls back to "Light" if unrecognized
+- Console logo updated with new slogan text
+
+### User Impact
+- **Cleaner UI** - Buttons integrate with the system look-and-feel instead of using custom colors
+- **Simpler theme selection** - Two clear choices instead of three overlapping options
+- **Accurate branding** - Title now shows trademark symbol, version, and specific OWASP Top 10 focus
+
+---
+
+## [1.1.2] - 2026-02-06
+
+### Fixed
+- **CRITICAL: 145MB config file causes startup hang and settings freeze** - The `api_key` field in `~/.silentchain_config.json` was being corrupted to ~145MB
+  - `JPasswordField.getPassword()` returns a Java `char[]`, and calling `str()` on it in Jython produces the array's repr (e.g. `"array(char, [u'a', u'r', ...])"`) instead of the actual password text
+  - Each save-and-reload cycle recursively expanded the value, growing the config file exponentially
+  - Fixed by using `"".join(apiKeyField.getPassword())` to properly convert the char array to a Python string
+  - Affected both "Test Connection" and "Save Settings" code paths
+
+### Technical Details
+- `testConnection()` handler (line 1029): `str(apiKeyField.getPassword())` → `"".join(apiKeyField.getPassword())`
+- `saveSettings()` handler (line 1194): `str(apiKeyField.getPassword())` → `"".join(apiKeyField.getPassword())`
+
+### User Impact
+- **Config file stays a few hundred bytes** instead of growing to 145MB+
+- **Extension loads instantly** — no more startup hang from parsing a massive JSON file
+- **Settings dialog opens instantly** — no more UI freeze from loading a corrupted API key
+- **Note:** Users with a corrupted config file should delete `~/.silentchain_config.json` and re-enter their settings
+
+---
+
+## [1.1.1] - 2025-02-04
+
+### Fixed
+- **CRITICAL: Settings button freezes Burp Suite** - Clicking Settings caused the entire UI to hang
+  - "Refresh Models" and "Test Connection" buttons called `test_ai_connection()` directly on the Swing EDT
+  - Network requests with 10-second timeouts blocked all UI rendering while waiting for a response
+  - Both buttons now run network calls in background threads with visual feedback ("..." / "Testing...")
+  - Buttons are disabled during the operation and re-enabled when complete
+- **Slow extension startup** - Loading the extension blocked Burp for up to 10 seconds
+  - `test_ai_connection()` was called synchronously during `registerExtenderCallbacks()`
+  - If the AI provider was unreachable, the full 10-second timeout had to elapse before Burp continued
+  - Startup connection test now runs in a daemon background thread
+
+### Technical Details
+- `refreshModels()` handler: network call moved to daemon thread, UI updates via `SwingUtilities.invokeLater()`
+- `testConnection()` handler: network call moved to daemon thread, button state restored in `finally` via EDT
+- Startup `test_ai_connection()` wrapped in daemon thread, warning messages still printed on failure
+- All three blocking paths now return immediately to the EDT
+
+### User Impact
+- **Settings dialog opens instantly** and remains responsive during connection tests
+- **Extension loads instantly** without waiting for AI provider connectivity
+- Buttons show visual feedback ("..." / "Testing...") while network operations run in background
+- No more Burp Suite freezing when AI provider is slow or unreachable
+
+---
+
+## [1.1.0] - 2025-02-04
+
+### Fixed
+- **CRITICAL: UI hang on Linux/Kali** - Burp Suite became unresponsive when running the extension on Linux systems
+  - Swing Event Dispatch Thread (EDT) was saturated by unconditional UI refreshes every 2 seconds
+  - Locks were held during Swing rendering, causing EDT to block on lock contention
+  - Console rebuilt all 1,000 messages into a single string every refresh cycle
+  - Redundant `time.sleep(4)` in analysis threads doubled request spacing unnecessarily
+
+### Changed
+- **Dirty-flag refresh guard** - `refreshUI()` now skips entirely when no data has changed
+  - Added `_ui_dirty` flag set by all data mutation methods
+  - Added `_refresh_pending` guard to prevent queueing multiple refreshes on the EDT
+  - If nothing changed, zero Swing work is performed
+- **Copy-then-render pattern** - Data is now snapshot under locks, then Swing components are updated with no locks held
+  - Eliminates EDT blocking on `tasks_lock`, `findings_lock_ui`, `console_lock`, and `stats_lock`
+- **Incremental console updates** - Only new messages are appended via `Document.insertString()`
+  - Full text rebuild only on first load or when message list is trimmed
+  - Reduces console update cost from O(n) to O(delta)
+- **Refresh interval increased** - Auto-refresh timer changed from 2 seconds to 5 seconds
+  - Stuck task check adjusted to every 6 cycles (~30 seconds) to match
+- **Removed redundant sleeps** - Removed `time.sleep(4)` from `analyze()` and `analyze_forced()` finally blocks
+  - The existing `min_delay = 4.0` rate limiter already enforces request spacing
+- **Removed redundant `refreshUI()` call** from `add_finding()` - auto-refresh timer handles updates via dirty flag
+
+### Technical Details
+- Added instance variables: `_ui_dirty`, `_refresh_pending`, `_last_console_len`
+- `refreshUI()` early-exits if `_refresh_pending` or not `_ui_dirty`
+- `_refresh_pending` cleared in `finally` block of EDT Runnable to guarantee reset
+- Dirty flag set in: `log_to_console()`, `add_finding()`, `addTask()`, `updateTask()`, `updateStats()`
+- Console uses `Document.insertString()` for append, `setText()` only for full rebuild
+- Handles message list trimming (when `current_len < prev_len`) by triggering full rebuild
+
+### User Impact
+- **Burp Suite no longer hangs on Kali Linux** and other Linux distributions
+- Responsive UI even with hundreds of tasks and findings
+- Lower CPU usage during idle periods (no unnecessary Swing work)
+- Faster analysis throughput (no redundant 4-second sleep per request)
+- Windows users also benefit from reduced EDT load
 
 ---
 
@@ -541,4 +656,4 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ---
 
-*Last Updated: 2025-01-31*
+*Last Updated: 2025-02-04*

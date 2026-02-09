@@ -102,12 +102,12 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         callbacks.registerContextMenuFactory(self)
 
         # Version Information
-        self.VERSION = "1.1.3"
+        self.VERSION = "1.1.1"
         self.EDITION = "Community"
-        self.RELEASE_DATE = "2026-02-08"
+        self.RELEASE_DATE = "2025-02-04"
         
         # Display version in extension name
-        callbacks.setExtensionName("SILENTCHAIN AI\u2122 - %s Edition v%s" % (self.EDITION, self.VERSION))
+        callbacks.setExtensionName("SILENTCHAIN AI - %s Edition v%s" % (self.EDITION, self.VERSION))
 
         # Configuration file path (in user's home directory)
         import os
@@ -123,7 +123,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.available_models = []
 
         self.VERBOSE = True
-        self.THEME = "Light"  # Options: Light, Dark
+        self.THEME = "Default"  # Options: Default, Dark, Light
         self.PASSIVE_SCANNING_ENABLED = True  # Enable/disable passive scanning (context menu still works)
 
         # File extensions to skip during analysis (static/non-security-relevant files)
@@ -226,14 +226,14 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         topPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10))
         
         # Title
-        titleLabel = JLabel("SILENTCHAIN AI\u2122 - Community Edition v%s" % self.VERSION)
+        titleLabel = JLabel("SILENTCHAIN AI - Community Edition")
         titleLabel.setFont(Font("Monospaced", Font.BOLD, 16))
         titlePanel = JPanel()
         titlePanel.add(titleLabel)
         topPanel.add(titlePanel)
         
         # Edition notice
-        editionLabel = JLabel("AI-Powered OWASP Top 10 Vulnerability Scanning for Burp Suite")
+        editionLabel = JLabel("AI-Powered Security Scanner")
         editionLabel.setFont(Font("Dialog", Font.ITALIC, 12))
         editionLabel.setForeground(Color(0, 100, 200))
         editionPanel = JPanel()
@@ -304,16 +304,24 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         
         # Settings button
         self.settingsButton = JButton("Settings", actionPerformed=self.openSettings)
+        self.settingsButton.setBackground(Color(100, 100, 200))
+        self.settingsButton.setForeground(Color.WHITE)
         
         self.clearButton = JButton("Clear Completed", actionPerformed=self.clearCompleted)
         
         # Cancel/Pause all buttons (kill switches)
         self.cancelAllButton = JButton("Cancel All Tasks", actionPerformed=self.cancelAllTasks)
+        self.cancelAllButton.setBackground(Color(200, 0, 0))  # Red
+        self.cancelAllButton.setForeground(Color.WHITE)
         
         self.pauseAllButton = JButton("Pause All Tasks", actionPerformed=self.pauseAllTasks)
+        self.pauseAllButton.setBackground(Color(200, 150, 0))  # Orange
+        self.pauseAllButton.setForeground(Color.BLACK)
         
-        # Upgrade to Professional button
-        self.upgradeButton = JButton("Upgrade to Professional", actionPerformed=self.openUpgradePage)
+        # Check for Updates button
+        self.upgradeButton = JButton("Check for Updates", actionPerformed=self.openUpgradePage)
+        self.upgradeButton.setBackground(Color(0, 150, 0))
+        self.upgradeButton.setForeground(Color.WHITE)
         
         controlPanel.add(self.settingsButton)
         controlPanel.add(self.clearButton)
@@ -470,14 +478,18 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
 
     def applyConsoleTheme(self):
         """Apply theme colors to console"""
-        if self.THEME == "Dark":
+        if self.THEME == "Light":
+            # Light theme: White background with charcoal text
+            self.consoleTextArea.setBackground(Color.WHITE)
+            self.consoleTextArea.setForeground(Color(0x36, 0x45, 0x4F))  # Charcoal #36454F
+        elif self.THEME == "Dark":
             # Dark theme: Charcoal background with light grey text
             self.consoleTextArea.setBackground(Color(0x32, 0x33, 0x34))  # #323334
             self.consoleTextArea.setForeground(Color(0xC4, 0xC6, 0xC7))  # #C4C6C7
         else:
-            # Light theme (default): White background with charcoal text
-            self.consoleTextArea.setBackground(Color.WHITE)
-            self.consoleTextArea.setForeground(Color(0x36, 0x45, 0x4F))  # Charcoal #36454F
+            # Default theme: Charcoal background with cyan text
+            self.consoleTextArea.setBackground(Color(0x32, 0x33, 0x34))  # #323334
+            self.consoleTextArea.setForeground(Color(0x4D, 0xE8, 0xFF))  # #4DE8FF
 
     def refreshUI(self, event=None):
         # Skip if a refresh is already queued on the EDT
@@ -813,8 +825,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 self.MAX_TOKENS = config.get("max_tokens", self.MAX_TOKENS)
                 self.AI_REQUEST_TIMEOUT = config.get("ai_request_timeout", self.AI_REQUEST_TIMEOUT)
                 self.VERBOSE = config.get("verbose", self.VERBOSE)
-                saved_theme = config.get("theme", self.THEME)
-                self.THEME = saved_theme if saved_theme in ("Light", "Dark") else "Light"
+                self.THEME = config.get("theme", self.THEME)
                 self.PASSIVE_SCANNING_ENABLED = config.get("passive_scanning_enabled", self.PASSIVE_SCANNING_ENABLED)
 
                 self.stdout.println("\n[CONFIG] Loaded saved configuration from %s" % self.config_file)
@@ -1015,7 +1026,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
 
             self.AI_PROVIDER = str(providerCombo.getSelectedItem())
             self.API_URL = apiUrlField.getText()
-            self.API_KEY = "".join(apiKeyField.getPassword())
+            self.API_KEY = str(apiKeyField.getPassword())
 
             def _do_test():
                 try:
@@ -1090,7 +1101,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         gbc.gridy = row
         advancedPanel.add(JLabel("Console Theme:"), gbc)
         gbc.gridx = 1
-        themeCombo = JComboBox(["Light", "Dark"])
+        themeCombo = JComboBox(["Default", "Dark", "Light"])
         themeCombo.setSelectedItem(self.THEME)
         advancedPanel.add(themeCombo, gbc)
         row += 1
@@ -1134,6 +1145,8 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         gbc.gridy = row
         gbc.gridwidth = 2
         debugTasksBtn = JButton("Run Task Diagnostics", actionPerformed=self.debugTasks)
+        debugTasksBtn.setBackground(Color(100, 100, 100))
+        debugTasksBtn.setForeground(Color.WHITE)
         advancedPanel.add(debugTasksBtn, gbc)
         row += 1
         
@@ -1178,7 +1191,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             # Save AI Provider settings
             self.AI_PROVIDER = str(providerCombo.getSelectedItem())
             self.API_URL = apiUrlField.getText()
-            self.API_KEY = "".join(apiKeyField.getPassword())
+            self.API_KEY = str(apiKeyField.getPassword())
             self.MODEL = str(modelCombo.getSelectedItem())
             try:
                 self.MAX_TOKENS = int(maxTokensField.getText())
@@ -1510,7 +1523,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.stdout.println("")
         self.stdout.println("     SILENTCHAIN AI")
         self.stdout.println("     ---------------")
-        self.stdout.println("     AI-Powered OWASP Top 10 Vulnerability Scanning for Burp Suite")
+        self.stdout.println("     AI-Powered Security Scanner")
         self.stdout.println("")
         self.stdout.println("     COMMUNITY EDITION v%s" % self.VERSION)
         self.stdout.println("")

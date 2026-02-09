@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Burp Suite Python Extension: SILENTCHAIN AI - COMMUNITY EDITION
-# Version: 1.1.1
+# Version: 1.1.0
 # Release Date: 2025-02-04
 # License: MIT License
 #
@@ -21,7 +21,6 @@
 # - Automated fuzzing with Burp Intruder integration
 #
 # Changelog:
-# v1.1.1 (2025-02-04) - Fix Settings freeze and slow startup: move network calls off EDT to background threads
 # v1.1.0 (2025-02-04) - Fix UI hang on Linux: dirty-flag refresh guard, incremental console, remove EDT lock contention
 # v1.0.9 (2025-02-02) - Skip static files (js,css,images,fonts), passive scan toggle, taller Settings dialog
 # v1.0.8 (2025-01-31) - Minor fixes and improvements
@@ -102,12 +101,12 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         callbacks.registerContextMenuFactory(self)
 
         # Version Information
-        self.VERSION = "1.1.3"
+        self.VERSION = "1.1.0"
         self.EDITION = "Community"
-        self.RELEASE_DATE = "2026-02-08"
+        self.RELEASE_DATE = "2025-02-04"
         
         # Display version in extension name
-        callbacks.setExtensionName("SILENTCHAIN AI\u2122 - %s Edition v%s" % (self.EDITION, self.VERSION))
+        callbacks.setExtensionName("SILENTCHAIN AI - %s Edition v%s" % (self.EDITION, self.VERSION))
 
         # Configuration file path (in user's home directory)
         import os
@@ -123,7 +122,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.available_models = []
 
         self.VERBOSE = True
-        self.THEME = "Light"  # Options: Light, Dark
+        self.THEME = "Default"  # Options: Default, Dark, Light
         self.PASSIVE_SCANNING_ENABLED = True  # Enable/disable passive scanning (context menu still works)
 
         # File extensions to skip during analysis (static/non-security-relevant files)
@@ -186,6 +185,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         # Display logo
         self.print_logo()
         
+        # Test AI connection and fetch models
+        connection_ok = self.test_ai_connection()
+        
         self.stdout.println("[+] Version: %s (Released: %s)" % (self.VERSION, self.RELEASE_DATE))
         self.stdout.println("[+] Edition: Community (Passive Analysis Only)")
         self.stdout.println("[+] AI Provider: %s" % self.AI_PROVIDER)
@@ -198,17 +200,11 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.stdout.println("[*] COMMUNITY EDITION - Passive scanning only")
         self.stdout.println("[*] For active verification, upgrade to Professional Edition")
         self.stdout.println("[*] Visit: https://silentchain.ai for more information")
-
-        # Test AI connection in background thread (non-blocking startup)
-        def _startup_connection_test():
-            connection_ok = self.test_ai_connection()
-            if not connection_ok:
-                self.stderr.println("\n[!] WARNING: AI connection test failed!")
-                self.stderr.println("[!] Extension will not function properly until connection is established.")
-                self.stderr.println("[!] Please check Settings and verify your AI configuration.")
-        _conn_thread = threading.Thread(target=_startup_connection_test)
-        _conn_thread.setDaemon(True)
-        _conn_thread.start()
+        
+        if not connection_ok:
+            self.stderr.println("\n[!] WARNING: AI connection test failed!")
+            self.stderr.println("[!] Extension will not function properly until connection is established.")
+            self.stderr.println("[!] Please check Settings and verify your AI configuration.")
 
         # Add UI tab
         callbacks.addSuiteTab(self)
@@ -226,14 +222,14 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         topPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10))
         
         # Title
-        titleLabel = JLabel("SILENTCHAIN AI\u2122 - Community Edition v%s" % self.VERSION)
+        titleLabel = JLabel("SILENTCHAIN AI - Community Edition")
         titleLabel.setFont(Font("Monospaced", Font.BOLD, 16))
         titlePanel = JPanel()
         titlePanel.add(titleLabel)
         topPanel.add(titlePanel)
         
         # Edition notice
-        editionLabel = JLabel("AI-Powered OWASP Top 10 Vulnerability Scanning for Burp Suite")
+        editionLabel = JLabel("AI-Powered Security Scanner")
         editionLabel.setFont(Font("Dialog", Font.ITALIC, 12))
         editionLabel.setForeground(Color(0, 100, 200))
         editionPanel = JPanel()
@@ -304,16 +300,24 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         
         # Settings button
         self.settingsButton = JButton("Settings", actionPerformed=self.openSettings)
+        self.settingsButton.setBackground(Color(100, 100, 200))
+        self.settingsButton.setForeground(Color.WHITE)
         
         self.clearButton = JButton("Clear Completed", actionPerformed=self.clearCompleted)
         
         # Cancel/Pause all buttons (kill switches)
         self.cancelAllButton = JButton("Cancel All Tasks", actionPerformed=self.cancelAllTasks)
+        self.cancelAllButton.setBackground(Color(200, 0, 0))  # Red
+        self.cancelAllButton.setForeground(Color.WHITE)
         
         self.pauseAllButton = JButton("Pause All Tasks", actionPerformed=self.pauseAllTasks)
+        self.pauseAllButton.setBackground(Color(200, 150, 0))  # Orange
+        self.pauseAllButton.setForeground(Color.BLACK)
         
-        # Upgrade to Professional button
-        self.upgradeButton = JButton("Upgrade to Professional", actionPerformed=self.openUpgradePage)
+        # Check for Updates button
+        self.upgradeButton = JButton("Check for Updates", actionPerformed=self.openUpgradePage)
+        self.upgradeButton.setBackground(Color(0, 150, 0))
+        self.upgradeButton.setForeground(Color.WHITE)
         
         controlPanel.add(self.settingsButton)
         controlPanel.add(self.clearButton)
@@ -470,14 +474,18 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
 
     def applyConsoleTheme(self):
         """Apply theme colors to console"""
-        if self.THEME == "Dark":
+        if self.THEME == "Light":
+            # Light theme: White background with charcoal text
+            self.consoleTextArea.setBackground(Color.WHITE)
+            self.consoleTextArea.setForeground(Color(0x36, 0x45, 0x4F))  # Charcoal #36454F
+        elif self.THEME == "Dark":
             # Dark theme: Charcoal background with light grey text
             self.consoleTextArea.setBackground(Color(0x32, 0x33, 0x34))  # #323334
             self.consoleTextArea.setForeground(Color(0xC4, 0xC6, 0xC7))  # #C4C6C7
         else:
-            # Light theme (default): White background with charcoal text
-            self.consoleTextArea.setBackground(Color.WHITE)
-            self.consoleTextArea.setForeground(Color(0x36, 0x45, 0x4F))  # Charcoal #36454F
+            # Default theme: Charcoal background with cyan text
+            self.consoleTextArea.setBackground(Color(0x32, 0x33, 0x34))  # #323334
+            self.consoleTextArea.setForeground(Color(0x4D, 0xE8, 0xFF))  # #4DE8FF
 
     def refreshUI(self, event=None):
         # Skip if a refresh is already queued on the EDT
@@ -813,8 +821,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 self.MAX_TOKENS = config.get("max_tokens", self.MAX_TOKENS)
                 self.AI_REQUEST_TIMEOUT = config.get("ai_request_timeout", self.AI_REQUEST_TIMEOUT)
                 self.VERBOSE = config.get("verbose", self.VERBOSE)
-                saved_theme = config.get("theme", self.THEME)
-                self.THEME = saved_theme if saved_theme in ("Light", "Dark") else "Light"
+                self.THEME = config.get("theme", self.THEME)
                 self.PASSIVE_SCANNING_ENABLED = config.get("passive_scanning_enabled", self.PASSIVE_SCANNING_ENABLED)
 
                 self.stdout.println("\n[CONFIG] Loaded saved configuration from %s" % self.config_file)
@@ -959,34 +966,13 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         refreshModelsBtn = JButton("Refresh")
         
         def refreshModels(e):
-            refreshModelsBtn.setEnabled(False)
-            refreshModelsBtn.setText("...")
             self.stdout.println("[SETTINGS] Fetching models...")
-            def _do_refresh():
-                try:
-                    if self.test_ai_connection():
-                        def _update_ui():
-                            modelCombo.removeAllItems()
-                            for model in self.available_models:
-                                modelCombo.addItem(model)
-                            self.stdout.println("[SETTINGS] Models refreshed")
-                            refreshModelsBtn.setEnabled(True)
-                            refreshModelsBtn.setText("Refresh")
-                        SwingUtilities.invokeLater(lambda: _update_ui())
-                    else:
-                        def _restore():
-                            refreshModelsBtn.setEnabled(True)
-                            refreshModelsBtn.setText("Refresh")
-                        SwingUtilities.invokeLater(lambda: _restore())
-                except:
-                    def _restore():
-                        refreshModelsBtn.setEnabled(True)
-                        refreshModelsBtn.setText("Refresh")
-                    SwingUtilities.invokeLater(lambda: _restore())
-            t = threading.Thread(target=_do_refresh)
-            t.setDaemon(True)
-            t.start()
-
+            if self.test_ai_connection():
+                modelCombo.removeAllItems()
+                for model in self.available_models:
+                    modelCombo.addItem(model)
+                self.stdout.println("[SETTINGS] Models refreshed")
+        
         refreshModelsBtn.addActionListener(refreshModels)
         aiPanel.add(refreshModelsBtn, gbc)
         row += 1
@@ -1007,32 +993,21 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         testBtn = JButton("Test Connection")
         
         def testConnection(e):
-            testBtn.setEnabled(False)
-            testBtn.setText("Testing...")
             old_provider = self.AI_PROVIDER
             old_url = self.API_URL
             old_key = self.API_KEY
-
+            
             self.AI_PROVIDER = str(providerCombo.getSelectedItem())
             self.API_URL = apiUrlField.getText()
-            self.API_KEY = "".join(apiKeyField.getPassword())
-
-            def _do_test():
-                try:
-                    success = self.test_ai_connection()
-                    if not success:
-                        self.AI_PROVIDER = old_provider
-                        self.API_URL = old_url
-                        self.API_KEY = old_key
-                finally:
-                    def _restore():
-                        testBtn.setEnabled(True)
-                        testBtn.setText("Test Connection")
-                    SwingUtilities.invokeLater(lambda: _restore())
-            t = threading.Thread(target=_do_test)
-            t.setDaemon(True)
-            t.start()
-
+            self.API_KEY = str(apiKeyField.getPassword())
+            
+            success = self.test_ai_connection()
+            
+            if not success:
+                self.AI_PROVIDER = old_provider
+                self.API_URL = old_url
+                self.API_KEY = old_key
+        
         testBtn.addActionListener(testConnection)
         aiPanel.add(testBtn, gbc)
         row += 1
@@ -1090,7 +1065,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         gbc.gridy = row
         advancedPanel.add(JLabel("Console Theme:"), gbc)
         gbc.gridx = 1
-        themeCombo = JComboBox(["Light", "Dark"])
+        themeCombo = JComboBox(["Default", "Dark", "Light"])
         themeCombo.setSelectedItem(self.THEME)
         advancedPanel.add(themeCombo, gbc)
         row += 1
@@ -1134,6 +1109,8 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         gbc.gridy = row
         gbc.gridwidth = 2
         debugTasksBtn = JButton("Run Task Diagnostics", actionPerformed=self.debugTasks)
+        debugTasksBtn.setBackground(Color(100, 100, 100))
+        debugTasksBtn.setForeground(Color.WHITE)
         advancedPanel.add(debugTasksBtn, gbc)
         row += 1
         
@@ -1178,7 +1155,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             # Save AI Provider settings
             self.AI_PROVIDER = str(providerCombo.getSelectedItem())
             self.API_URL = apiUrlField.getText()
-            self.API_KEY = "".join(apiKeyField.getPassword())
+            self.API_KEY = str(apiKeyField.getPassword())
             self.MODEL = str(modelCombo.getSelectedItem())
             try:
                 self.MAX_TOKENS = int(maxTokensField.getText())
@@ -1510,7 +1487,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.stdout.println("")
         self.stdout.println("     SILENTCHAIN AI")
         self.stdout.println("     ---------------")
-        self.stdout.println("     AI-Powered OWASP Top 10 Vulnerability Scanning for Burp Suite")
+        self.stdout.println("     AI-Powered Security Scanner")
         self.stdout.println("")
         self.stdout.println("     COMMUNITY EDITION v%s" % self.VERSION)
         self.stdout.println("")
