@@ -1,6 +1,6 @@
-# Installation Guide - SILENTCHAIN AI Community Edition
+# Installation Guide - SILENTCHAIN AI™ Community Edition
 
-Complete step-by-step installation and setup guide for SILENTCHAIN AI.
+Complete step-by-step installation and setup guide for SILENTCHAIN AI™.
 
 ---
 
@@ -50,10 +50,10 @@ Complete step-by-step installation and setup guide for SILENTCHAIN AI.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/silentchain-ai.git
+git clone https://github.com/silentchainai/SILENTCHAIN.git
 
 # Or download ZIP
-# https://github.com/yourusername/silentchain-ai/archive/refs/heads/main.zip
+# https://github.com/silentchainai/SILENTCHAIN/archive/refs/heads/main.zip
 ```
 
 #### Step 2: Load in Burp Suite
@@ -461,7 +461,7 @@ ollama serve
 - [FAQ](docs/FAQ.md)
 
 ### Community Support
-- [GitHub Issues](https://github.com/yourusername/silentchain-ai/issues)
+- [GitHub Issues](https://github.com/silentchainai/SILENTCHAIN/issues)
 - [Discord Community](https://discord.gg/silentchain)
 - Email: support@silentchain.ai
 

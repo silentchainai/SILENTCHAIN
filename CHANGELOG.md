@@ -640,7 +640,7 @@ MIT License - See [LICENSE](LICENSE) file for details.
 ## Support
 
 - **Community Support**: GitHub Issues
-- **Documentation**: https://github.com/silentchain-ai/community
+- **Documentation**: https://github.com/silentchainai/SILENTCHAIN
 - **Professional Support**: support@silentchain.ai (Professional Edition only)
 
 ---

@@ -1,9 +1,8 @@
-# SILENTCHAIN AI - Community Edition
+# SILENTCHAIN AI™ - Community Edition
 
 <div align="center">
 
 ![SILENTCHAIN Logo](https://img.shields.io/badge/SILENTCHAIN-AI%20Security-blue?style=for-the-badge)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![Burp Suite](https://img.shields.io/badge/Burp_Suite-Extension-orange?style=for-the-badge&logo=burpsuite)](https://portswigger.net/burp)
 [![Python](https://img.shields.io/badge/Python-2.7-yellow?style=for-the-badge&logo=python)](https://www.python.org/)
 
@@ -19,20 +18,22 @@
 
 ---
 
+> **Note:** This is the Community Edition. Commercial and Professional Editions with advanced features are available separately.
+
 ## 🌟 Overview
 
-**SILENTCHAIN AI - Community Edition** is a free, open-source Burp Suite extension that brings the power of artificial intelligence to web application security testing. Using advanced AI models, SILENTCHAIN performs intelligent passive analysis of HTTP traffic to identify OWASP Top 10 vulnerabilities, security misconfigurations, and potential attack vectors.
+**SILENTCHAIN AI™ - Community Edition** is a Burp Suite extension that brings the power of artificial intelligence to web application security testing. Using advanced AI models, SILENTCHAIN performs intelligent passive analysis of HTTP traffic to identify OWASP Top 10 vulnerabilities, security misconfigurations, and potential attack vectors.
 
 ### Why SILENTCHAIN?
 
-Traditional security scanners rely on predefined signatures and patterns. **SILENTCHAIN AI** goes beyond with:
+Traditional security scanners rely on predefined signatures and patterns. **SILENTCHAIN AI™** goes beyond with:
 
 - **🧠 AI-Powered Analysis**: Leverages state-of-the-art language models (Ollama, OpenAI, Claude, Gemini) for intelligent vulnerability detection
 - **🎯 Context-Aware Detection**: Understands application logic and business context, not just pattern matching
 - **⚡ Real-Time Scanning**: Analyzes traffic as it flows through Burp's proxy
 - **📊 Professional Reporting**: Generates detailed findings with CWE, OWASP mappings, and remediation guidance
 - **🔄 Zero False Positives**: AI validation reduces noise and focuses on real vulnerabilities
-- **🆓 100% Free**: Community edition provides full passive analysis capabilities
+- **🆓 Community Edition**: Free passive analysis capabilities
 
 ---
 
@@ -67,7 +68,7 @@ Traditional security scanners rely on predefined signatures and patterns. **SILE
 
 ### Vulnerability Detection
 
-SILENTCHAIN AI detects a wide range of security issues including:
+SILENTCHAIN AI™ detects a wide range of security issues including:
 
 | Category | Vulnerabilities |
 |----------|----------------|
@@ -89,41 +90,52 @@ SILENTCHAIN AI detects a wide range of security issues including:
 
 - **Burp Suite** (Community or Professional)
 - **Java 8+** (required by Burp)
-- **Python 2.7** (Jython, included with Burp)
+- **Jython** (for Python extensions, typically bundled with Burp)
 - **AI Provider** (one of the following):
-  - [Ollama](https://ollama.ai) (Free, local)
-  - OpenAI API key
-  - Claude API key
-  - Gemini API key
+   - [Ollama](https://ollama.ai) (Free, local)
+   - OpenAI API key
+   - Claude API key
+   - Gemini API key
 
 ### Installation
 
+#### Method 1: From BApp Store (Recommended)
+
+1. Open Burp Suite
+2. Go to **Extender** → **BApp Store**
+3. Search for "SILENTCHAIN AI"
+4. Click **Install**
+
+#### Method 2: Manual Installation
+
 1. **Download the Extension**
-   ```bash
-   git clone https://github.com/yourusername/silentchain-ai.git
-   cd silentchain-ai
-   ```
+   - Download `silentchain_ai_community.py` from this repository or the Burp Suite BApp Store
 
 2. **Load in Burp Suite**
    - Open Burp Suite
-   - Go to `Extensions` → `Installed`
-   - Click `Add`
-   - Set Extension type: `Python`
-   - Select `silentchain_ai_community.py`
-   - Click `Next`
+   - Go to **Extender** → **Extensions** → **Add**
+   - Set Extension type: **Python** (or Jython)
+   - Select the downloaded `silentchain_ai_community.py` file
+   - Click **Next**
 
 3. **Configure AI Provider**
-   - Go to `SILENTCHAIN` tab in Burp
-   - Click `⚙ Settings`
+   - Go to **SILENTCHAIN** tab in Burp
+   - Click **⚙ Settings**
    - Configure your AI provider (see [Configuration](#-configuration))
-   - Click `Test Connection`
-   - Click `Save`
+   - Click **Test Connection**
+   - Click **Save**
 
 4. **Start Scanning**
-   - Set your target scope in Burp (`Target` → `Scope`)
+   - Set your target scope in Burp (**Target** → **Scope**)
    - Browse the target application through Burp's proxy
    - SILENTCHAIN will automatically analyze traffic
-   - View findings in the `Findings` panel and Burp's `Issue Activity`
+   - View findings in the **Findings** panel and Burp's **Issue Activity**
+
+### Requirements
+
+- **Cross-platform**: Windows, macOS, Linux
+- **Burp Suite** (Community or Professional)
+- **Jython** (for Python extensions)
 
 ---
 
@@ -235,10 +247,10 @@ SILENTCHAIN AI detects a wide range of security issues including:
 #### 🔍 **Findings Panel**
 - All detected vulnerabilities
 - Severity-based color coding:
-  - 🔴 **High** - Critical vulnerabilities
-  - 🟠 **Medium** - Important security issues
-  - 🟡 **Low** - Minor vulnerabilities
-  - 🔵 **Information** - Security notes
+   - 🔴 **High** - Critical vulnerabilities
+   - 🟠 **Medium** - Important security issues
+   - 🟡 **Low** - Minor vulnerabilities
+   - 🔵 **Information** - Security notes
 - Confidence levels
 - Discovery timestamps
 
@@ -319,7 +331,7 @@ This forces analysis even if the URL was previously scanned.
 - 🔄 **Burp Intruder Integration**: Auto-configures fuzzing attacks
 - ⚡ **Smart Fuzzing**: AI-generated payloads for maximum coverage
 
-**[Learn More & Upgrade →](https://silentchain.ai)**
+**Contact us for commercial licensing and professional editions:** support@sn1persecurity.com
 
 ---
 
@@ -369,7 +381,7 @@ Enable verbose logging:
 
 ## 🤝 Contributing
 
-We welcome contributions! Here's how you can help:
+This project does **not accept outside contributions**. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ### Reporting Bugs
 
@@ -388,54 +400,29 @@ Open an issue with tag `enhancement`:
 - Explain use case
 - Provide examples if possible
 
-### Code Contributions
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Guidelines
-
-- Follow existing code style
-- Add comments for complex logic
-- Test with multiple AI providers
-- Update documentation
-
 ---
 
 ## 📄 License
 
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+SILENTCHAIN AI™ CE is **source-visible but proprietary software**. By using this software, you agree to the terms in the [LICENSE](LICENSE) file.
 
-```
-MIT License
+### PortSwigger BApp Store
 
-Copyright (c) 2025 SILENTCHAIN AI
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-```
+PortSwigger Ltd. is granted explicit permission to redistribute, host, and bundle this software within Burp Suite and the BApp Store free of charge to users. All other redistribution is prohibited without written permission.
 
 ---
 
-## 🔒 Security & Privacy
+## ⚖️ Responsible Use
+
+**Do not use this software for unauthorized access or activities outside systems you own or have explicit permission to test.**
 
 ### Data Handling
 
 - **Local Processing**: SILENTCHAIN runs entirely within Burp Suite
 - **No Data Collection**: We don't collect or transmit usage data
 - **AI Provider Privacy**:
-  - **Ollama**: Completely local, no external communication
-  - **Cloud Providers**: Data sent to respective AI services (OpenAI, Claude, Gemini)
+   - **Ollama**: Completely local, no external communication
+   - **Cloud Providers**: Data sent to respective AI services (OpenAI, Claude, Gemini)
 
 ### Best Practices
 
@@ -453,7 +440,7 @@ copies or substantial portions of the Software.
 - 📚 **Documentation**: [silentchain.ai/docs](https://silentchain.ai/docs)
 - 💬 **Discord**: [Join our community](https://discord.gg/silentchain)
 - 🐛 **Issues**: [GitHub Issues](https://github.com/yourusername/silentchain-ai/issues)
-- ✉️ **Email**: support@silentchain.ai
+- ✉️ **Email**: support@sn1persecurity.com
 
 ### Stay Updated
 
@@ -477,24 +464,9 @@ Inspired by the security community's dedication to making the web safer.
 
 ---
 
-## 📈 Roadmap
+## ™️ Trademark Notice
 
-### Upcoming Features
-
-- [ ] Enhanced UI/UX improvements
-- [ ] Export findings to PDF/CSV
-- [ ] Integration with CI/CD pipelines
-- [ ] Support for custom AI models
-- [ ] Collaborative team features
-- [ ] Mobile app companion
-
-### Professional Edition Roadmap
-
-- [ ] Advanced WAF fingerprinting
-- [ ] ML-powered false positive reduction
-- [ ] Custom payload templates
-- [ ] Automated exploit generation
-- [ ] Vulnerability chaining detection
+"SILENTCHAIN AI™", "SILENTCHAIN™", and the SILENTCHAIN AI logo are trademarks of SN1PERSECURITY LLC. Unauthorized use is prohibited.
 
 ---
 
@@ -502,10 +474,10 @@ Inspired by the security community's dedication to making the web safer.
 
 ### 🔗 ⛓️ 🔒
 
-**SILENTCHAIN AI** - *Intelligent Security Testing for the Modern Web*
+**SILENTCHAIN AI™** - *Intelligent Security Testing for the Modern Web*
 
 [Website](https://silentchain.ai) • [Documentation](https://silentchain.ai/docs) • [Professional Edition](https://silentchain.ai/pro)
 
-Made with ❤️ by the SILENTCHAIN team
+**Copyright © 2026 SN1PERSECURITY LLC. All rights reserved.**
 
 </div>

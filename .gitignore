@@ -1,5 +1,8 @@
 # Local/unneeded files (IDE configs, tool settings, etc.)
 .local/
+.claude/
+.idea/
+releases/
 
 # Python
 __pycache__/

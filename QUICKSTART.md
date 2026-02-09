@@ -1,6 +1,6 @@
-# Quick Start Guide - SILENTCHAIN AI
+# Quick Start Guide - SILENTCHAIN AI™
 
-Get up and running with SILENTCHAIN AI in under 5 minutes.
+Get up and running with SILENTCHAIN AI™ in under 5 minutes.
 
 ---
 

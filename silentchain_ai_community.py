@@ -3,6 +3,7 @@
 # Version: 1.1.1
 # Release Date: 2025-02-04
 # License: MIT License
+# Build-ID: bb90850f-1d2e-4d12-852e-842527475b37
 #
 # COMMUNITY EDITION - AI-Powered Security Scanner
 # For active verification and Phase 2 testing, upgrade to Professional Edition
@@ -96,18 +97,16 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.stdout = ConsolePrintWriter(original_stdout, self)
         self.stderr = ConsolePrintWriter(original_stderr, self)
 
-        callbacks.setExtensionName("SILENTCHAIN AI - Community Edition")
-        callbacks.registerHttpListener(self)
-        callbacks.registerScannerCheck(self)
-        callbacks.registerContextMenuFactory(self)
-
         # Version Information
         self.VERSION = "1.1.3"
         self.EDITION = "Community"
         self.RELEASE_DATE = "2026-02-08"
-        
-        # Display version in extension name
-        callbacks.setExtensionName("SILENTCHAIN AI\u2122 - %s Edition v%s" % (self.EDITION, self.VERSION))
+        self.BUILD_ID = "bb90850f-1d2e-4d12-852e-842527475b37"
+
+        callbacks.setExtensionName("SILENTCHAIN AI - %s Edition v%s" % (self.EDITION, self.VERSION))
+        callbacks.registerHttpListener(self)
+        callbacks.registerScannerCheck(self)
+        callbacks.registerContextMenuFactory(self)
 
         # Configuration file path (in user's home directory)
         import os
@@ -226,7 +225,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         topPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10))
         
         # Title
-        titleLabel = JLabel("SILENTCHAIN AI\u2122 - Community Edition v%s" % self.VERSION)
+        titleLabel = JLabel("SILENTCHAIN AI - Community Edition v%s" % self.VERSION)
         titleLabel.setFont(Font("Monospaced", Font.BOLD, 16))
         titlePanel = JPanel()
         titlePanel.add(titleLabel)
@@ -235,35 +234,11 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         # Edition notice
         editionLabel = JLabel("AI-Powered OWASP Top 10 Vulnerability Scanning for Burp Suite")
         editionLabel.setFont(Font("Dialog", Font.ITALIC, 12))
-        editionLabel.setForeground(Color(0, 100, 200))
+        editionLabel.setForeground(Color(0xD5, 0x59, 0x35))
         editionPanel = JPanel()
         editionPanel.add(editionLabel)
         topPanel.add(editionPanel)
 
-        # Website link
-        from java.awt import Cursor
-        from java.awt.event import MouseAdapter
-        websiteLabel = JLabel("https://silentchain.ai")
-        websiteLabel.setFont(Font("Dialog", Font.PLAIN, 11))
-        websiteLabel.setForeground(Color(0, 100, 200))
-        websiteLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))
-
-        class WebsiteLinkListener(MouseAdapter):
-            def __init__(self, extender):
-                self.extender = extender
-
-            def mouseClicked(self, e):
-                try:
-                    import webbrowser
-                    webbrowser.open("https://silentchain.ai")
-                except:
-                    self.extender.stdout.println("[INFO] Visit: https://silentchain.ai")
-
-        websiteLabel.addMouseListener(WebsiteLinkListener(self))
-        websitePanel = JPanel()
-        websitePanel.add(websiteLabel)
-        topPanel.add(websitePanel)
-        
         topPanel.add(Box.createRigidArea(Dimension(0, 10)))
         
         # Stats panel
@@ -314,6 +289,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         
         # Upgrade to Professional button
         self.upgradeButton = JButton("Upgrade to Professional", actionPerformed=self.openUpgradePage)
+        self.upgradeButton.setBackground(Color(0xD5, 0x59, 0x35))
+        self.upgradeButton.setForeground(Color.WHITE)
+        self.upgradeButton.setOpaque(True)
         
         controlPanel.add(self.settingsButton)
         controlPanel.add(self.clearButton)
@@ -473,7 +451,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         if self.THEME == "Dark":
             # Dark theme: Charcoal background with light grey text
             self.consoleTextArea.setBackground(Color(0x32, 0x33, 0x34))  # #323334
-            self.consoleTextArea.setForeground(Color(0xC4, 0xC6, 0xC7))  # #C4C6C7
+            self.consoleTextArea.setForeground(Color(0x7D, 0xA3, 0x58))  # #7DA358
         else:
             # Light theme (default): White background with charcoal text
             self.consoleTextArea.setBackground(Color.WHITE)
@@ -1165,7 +1143,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             "Visit https://silentchain.ai for more information"
         )
         upgradeNotice.setEditable(False)
-        upgradeNotice.setBackground(Color(255, 255, 200))
+        upgradeNotice.setBackground(advancedPanel.getBackground())
         upgradeNotice.setFont(Font("Dialog", Font.PLAIN, 11))
         advancedPanel.add(upgradeNotice, gbc)
         
