@@ -12,7 +12,7 @@
 
 *Intelligent • Silent • Adaptive • Comprehensive*
 
-[🚀 Getting Started](#-quick-start) • [📖 Documentation](#-documentation) • [🔧 Configuration](#-configuration) • [⬆️ Upgrade to Pro](#-upgrade-to-professional)
+[🚀 Getting Started](#-quick-start) • [📖 Documentation](#-documentation) • [🔧 Configuration](#-configuration) • [⬆️ Upgrade to Pro](https://silentchain.ai)
 
 </div>
 
@@ -389,7 +389,7 @@ This project does **not accept outside contributions**. See [CONTRIBUTING.md](CO
 
 ### Reporting Bugs
 
-1. Check [existing issues](https://github.com/yourusername/silentchain-ai/issues)
+1. Check [existing issues](https://github.com/silentchainai/SILENTCHAIN/issues)
 2. Create a new issue with:
    - Burp Suite version
    - SILENTCHAIN version
@@ -441,21 +441,22 @@ PortSwigger Ltd. is granted explicit permission to redistribute, host, and bundl
 
 ### Get Help
 
-- 📚 **Documentation**: [silentchain.ai/docs](https://silentchain.ai/docs)
-- 💬 **Discord**: [Join our community](https://discord.gg/silentchain)
-- 🐛 **Issues**: [GitHub Issues](https://github.com/yourusername/silentchain-ai/issues)
-- ✉️ **Email**: support@sn1persecurity.com
+- 📚 **Documentation**: [Documentation](#-documentation)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/silentchainai/SILENTCHAIN/issues)
+- ✉️ **Email**: support@silentchain.ai
 
 ### Stay Updated
 
 - ⭐ **Star** this repository
 - 👁️ **Watch** for updates
 - 🐦 **Twitter**: [@SilentChainAI](https://twitter.com/SilentChainAI)
-- 📧 **Newsletter**: [Subscribe](https://silentchain.ai/newsletter)
 
 ---
 
 ## 🙏 Acknowledgments
+
+Built by:
+- [@xer0dayz](https://x.com/xer0dayz) at [@Sn1perSecurity](https://sn1persecurity.com)
 
 Built with:
 - [Burp Suite](https://portswigger.net/burp) by PortSwigger
@@ -480,7 +481,7 @@ Inspired by the security community's dedication to making the web safer.
 
 **SILENTCHAIN AI™** - *Intelligent Security Testing for the Modern Web*
 
-[Website](https://silentchain.ai) • [Documentation](https://silentchain.ai/docs) • [Professional Edition](https://silentchain.ai/pro)
+[Website](https://silentchain.ai) • [Documentation](#-documentation) • [Professional Edition](https://silentchain.ai/)
 
 **Copyright © 2026 SN1PERSECURITY LLC. All rights reserved.**
 
