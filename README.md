@@ -456,7 +456,7 @@ PortSwigger Ltd. is granted explicit permission to redistribute, host, and bundl
 ## 🙏 Acknowledgments
 
 Built by:
-- [@xer0dayz](https://x.com/xer0dayz) at [@Sn1perSecurity](https://sn1persecurity.com)
+- [@xer0dayz](https://x.com/xer0dayz) at [@SN1PERSECURITY](https://sn1persecurity.com) LLC
 
 Built with:
 - [Burp Suite](https://portswigger.net/burp) by PortSwigger
