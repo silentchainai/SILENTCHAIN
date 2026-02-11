@@ -17,6 +17,8 @@
 </div>
 
 ---
+![SILENTCHAIN-AI-Intro.gif](images/SILENTCHAIN-AI-Intro.gif)
+
 ![SILENTCHAINAI-professional-burp-findings1.PNG](images/SILENTCHAINAI-professional-burp-findings1.PNG)
 
 ![SILENTCHAINAI-burp-findings1.PNG](images/SILENTCHAINAI-burp-findings1.PNG)
