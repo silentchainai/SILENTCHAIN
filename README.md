@@ -1,3 +1,5 @@
+![SILENTCHAIN-AI-Intro.gif](images/SILENTCHAIN-AI-Intro.gif)
+
 # SILENTCHAIN AI™ - Community Edition
 
 <div align="center">
@@ -17,7 +19,6 @@
 </div>
 
 ---
-![SILENTCHAIN-AI-Intro.gif](images/SILENTCHAIN-AI-Intro.gif)
 
 ![SILENTCHAINAI-professional-burp-findings1.PNG](images/SILENTCHAINAI-professional-burp-findings1.PNG)
 
