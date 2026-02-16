@@ -14,7 +14,7 @@
 
 *Intelligent • Silent • Adaptive • Comprehensive*
 
-[🚀 Getting Started](#-quick-start) • [📖 Documentation](#-documentation) • [🔧 Configuration](#-configuration) • [⬆️ Upgrade to Pro](https://silentchain.ai)
+[🚀 Getting Started](#-quick-start) • [📖 Documentation](#-documentation) • [🔧 Configuration](#-configuration) • [📊 Benchmarks](BENCHMARK.md) • [⬆️ Upgrade to Pro](https://silentchain.ai)
 
 </div>
 
