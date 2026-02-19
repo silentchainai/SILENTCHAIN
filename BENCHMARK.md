@@ -30,7 +30,7 @@ This document contains performance benchmarks and security scan results for SILE
 | :red_circle: High | 16 |
 | :orange_circle: Medium | 37 |
 | :yellow_circle: Low | 63 |
-| :blue_circle: Info | 35 |
+| 🔵 Info | 35 |
 | **Total** | **151** |
 | Verified (Phase 2) | 20 |
 
