@@ -33,6 +33,7 @@ Complete step-by-step installation and setup guide for SILENTCHAIN AI™.
 | **OpenAI** | Paid | Easy | Cloud |
 | **Claude** | Paid | Easy | Cloud |
 | **Gemini** | Free/Paid | Easy | Cloud |
+| **Azure Foundry** | Paid | Medium | Cloud |
 
 ### System Resources
 
@@ -231,6 +232,28 @@ ollama run llama3 "Hello, test"
 
 ---
 
+### Option 5: Azure Foundry (Azure OpenAI)
+
+#### Get API Key and Endpoint
+
+1. Open your Azure AI Foundry project (or Azure OpenAI resource)
+2. Copy your endpoint, for example:
+   - `https://YOUR-RESOURCE.openai.azure.com`
+3. Copy your API key from the Keys/Endpoint page
+4. Confirm the deployment name you want to use (for example, `gpt-4o-security`)
+
+#### Configure in SILENTCHAIN
+
+1. Go to `SILENTCHAIN` → `⚙ Settings`
+2. **AI Provider**: Select `Azure Foundry`
+3. **API URL**: `https://YOUR-RESOURCE.openai.azure.com`
+4. **API Key**: Paste your Azure key
+5. **Model**: Enter your deployment name (not the raw model family name)
+6. Click `Test Connection`
+7. Click `Save`
+
+---
+
 ## First-Time Configuration
 
 ### Step 1: Set Burp Scope
@@ -246,6 +269,16 @@ SILENTCHAIN only analyzes in-scope targets:
 4. Configure protocol, host, and path as needed
 
 **Tip**: Start with a single test application to verify everything works.
+
+### Validate Azure .env (Optional but Recommended)
+
+If you are using Azure Foundry with a local `.env` file, run:
+
+```bash
+./tools/test_azure_env.sh ./.env
+```
+
+Proceed when the script reports `STATUS: VALID`.
 
 ### Step 2: Configure Browser Proxy
 

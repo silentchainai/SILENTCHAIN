@@ -16,6 +16,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.4] - 2026-03-18
+
+### Added
+- **Azure Foundry provider support** - Added Azure AI Foundry (Azure OpenAI-compatible) as a first-class AI provider in Settings
+  - New provider option: `Azure Foundry`
+  - Default endpoint helper: `https://YOUR-RESOURCE.openai.azure.com`
+  - Added provider routing for connection tests and AI inference requests
+  - Supports deployment discovery via Azure deployments API in Test Connection
+  - Supports direct chat completion calls with API version handling
+- **Azure .env validation script** - Added `tools/test_azure_env.sh` for safe local configuration checks
+  - Validates required `.env` keys
+  - Probes Azure endpoint and deployment chat completion reachability
+  - Reports clear `STATUS: VALID` or `STATUS: INVALID`
+
+### Changed
+- **Configuration help text expanded** - Settings now documents Azure Foundry endpoint and deployment-name usage
+- **Documentation updated** - README, Quick Start, and Installation guides now include Azure Foundry setup
+
+### User Impact
+- Users can run SILENTCHAIN with Azure-hosted OpenAI deployments from Azure AI Foundry
+- Existing providers (Ollama, OpenAI, Claude, Gemini) continue to work as before
+
+---
+
 ## [1.1.3] - 2026-02-08
 
 ### Changed

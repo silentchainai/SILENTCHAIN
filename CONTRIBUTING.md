@@ -16,3 +16,13 @@ For questions, business inquiries, or information about commercial/professional 
 
 support@silentchain.ai
 
+## Maintainer Validation
+
+For internal testing and release QA, validate Azure `.env` settings before manual Burp testing:
+
+```bash
+./tools/test_azure_env.sh ./.env
+```
+
+Expected result: `STATUS: VALID`.
+

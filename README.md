@@ -36,7 +36,7 @@
 
 Traditional security scanners rely on predefined signatures and patterns. **SILENTCHAIN AI™** goes beyond with:
 
-- **🧠 AI-Powered Analysis**: Leverages state-of-the-art language models (Ollama, OpenAI, Claude, Gemini) for intelligent vulnerability detection
+- **🧠 AI-Powered Analysis**: Leverages state-of-the-art language models (Ollama, OpenAI, Claude, Gemini, Azure Foundry) for intelligent vulnerability detection
 - **🎯 Context-Aware Detection**: Understands application logic and business context, not just pattern matching
 - **⚡ Real-Time Scanning**: Analyzes traffic as it flows through Burp's proxy
 - **📊 Professional Reporting**: Generates detailed findings with CWE, OWASP mappings, and remediation guidance
@@ -66,6 +66,7 @@ Traditional security scanners rely on predefined signatures and patterns. **SILE
 - **OpenAI** (GPT-4, GPT-3.5)
 - **Claude** (Anthropic)
 - **Gemini** (Google)
+- **Azure Foundry** (Azure OpenAI deployments)
 
 #### 📋 **Smart Reporting**
 - Detailed vulnerability descriptions
@@ -104,6 +105,7 @@ SILENTCHAIN AI™ detects a wide range of security issues including:
    - OpenAI API key
    - Claude API key
    - Gemini API key
+   - Azure Foundry API key
 
 ### Installation
 
@@ -206,6 +208,16 @@ SILENTCHAIN AI™ detects a wide range of security issues including:
    - API Key: Your Google API key
    - Model: `gemini-1.5-pro`
 
+#### Option 5: Azure Foundry (Azure OpenAI)
+
+1. Get API key and endpoint from Azure AI Foundry / Azure OpenAI.
+
+2. Configure SILENTCHAIN:
+   - Provider: `Azure Foundry`
+   - API URL: `https://YOUR-RESOURCE.openai.azure.com`
+   - API Key: Your Azure API key
+   - Model: Your deployment name (example: `gpt-4o-security`)
+
 ### Settings Reference
 
 | Setting | Description | Default |
@@ -216,6 +228,16 @@ SILENTCHAIN AI™ detects a wide range of security issues including:
 | **Model** | AI model name | `deepseek-r1:latest` |
 | **Max Tokens** | Response length limit | `2048` |
 | **Verbose Logging** | Enable detailed logs | `True` |
+
+### Azure .env Validation
+
+Use the built-in validation script to verify your Azure endpoint, API key, deployment, and API version before testing in Burp:
+
+```bash
+./tools/test_azure_env.sh ./.env
+```
+
+Expected output ends with `STATUS: VALID`.
 
 ---
 

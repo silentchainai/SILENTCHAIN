@@ -67,6 +67,14 @@ More benchmarks will be added here as additional models, providers, and target a
 - **Network**: Standard broadband connection
 - **Hardware**: (To be documented per test)
 
+Before cloud-provider benchmarks, validate local Azure `.env` configuration:
+
+```bash
+./tools/test_azure_env.sh ./.env
+```
+
+Record whether the script returns `STATUS: VALID` with each benchmark run.
+
 ### Test Targets
 - **aspnet.testinvicti.com**: ASP.NET vulnerable application for security testing
 - More targets will be added in future benchmarks

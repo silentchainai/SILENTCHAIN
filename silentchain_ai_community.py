@@ -45,6 +45,7 @@ from java.util import ArrayList
 import json
 import threading
 import urllib2
+import urllib
 import time
 import hashlib
 from datetime import datetime
@@ -98,9 +99,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.stderr = ConsolePrintWriter(original_stderr, self)
 
         # Version Information
-        self.VERSION = "1.1.3"
+        self.VERSION = "1.1.4"
         self.EDITION = "Community"
-        self.RELEASE_DATE = "2026-02-08"
+        self.RELEASE_DATE = "2026-03-18"
         self.BUILD_ID = "bb90850f-1d2e-4d12-852e-842527475b37"
 
         callbacks.setExtensionName("SILENTCHAIN AI - %s Edition v%s" % (self.EDITION, self.VERSION))
@@ -113,10 +114,11 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.config_file = os.path.join(os.path.expanduser("~"), ".silentchain_config.json")
         
         # AI Provider Settings (defaults - will be overridden by saved config)
-        self.AI_PROVIDER = "Ollama"  # Options: Ollama, OpenAI, Claude, Gemini
+        self.AI_PROVIDER = "Ollama"  # Options: Ollama, OpenAI, Claude, Gemini, Azure Foundry
         self.API_URL = "http://localhost:11434"
-        self.API_KEY = ""  # For OpenAI, Claude, Gemini
+        self.API_KEY = ""  # For OpenAI, Claude, Gemini, Azure Foundry
         self.MODEL = "deepseek-r1:latest"
+        self.AZURE_API_VERSION = "2024-06-01"  # Can be overridden via OPENAI_API_VERSION or AZURE_OPENAI_API_VERSION
         self.MAX_TOKENS = 2048
         self.AI_REQUEST_TIMEOUT = 60  # Timeout for AI requests in seconds (default: 60)
         self.available_models = []
@@ -130,6 +132,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
 
         # Load saved configuration (if exists)
         self.load_config()
+        self.apply_environment_config()
         
         # UI refresh control
         self._ui_dirty = True           # Flag: data changed since last refresh
@@ -788,6 +791,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 self.API_URL = config.get("api_url", self.API_URL)
                 self.API_KEY = config.get("api_key", self.API_KEY)
                 self.MODEL = config.get("model", self.MODEL)
+                self.AZURE_API_VERSION = config.get("azure_api_version", self.AZURE_API_VERSION)
                 self.MAX_TOKENS = config.get("max_tokens", self.MAX_TOKENS)
                 self.AI_REQUEST_TIMEOUT = config.get("ai_request_timeout", self.AI_REQUEST_TIMEOUT)
                 self.VERBOSE = config.get("verbose", self.VERBOSE)
@@ -812,6 +816,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 "api_url": self.API_URL,
                 "api_key": self.API_KEY,
                 "model": self.MODEL,
+                "azure_api_version": self.AZURE_API_VERSION,
                 "max_tokens": self.MAX_TOKENS,
                 "ai_request_timeout": self.AI_REQUEST_TIMEOUT,
                 "verbose": self.VERBOSE,
@@ -829,6 +834,108 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         except Exception as e:
             self.stderr.println("[!] Failed to save config: %s" % e)
             return False
+
+    def apply_environment_config(self):
+        """Apply optional environment-variable overrides for cloud provider setup."""
+        try:
+            import os
+            env_values = dict(os.environ)
+
+            # Merge .env values only for keys not already set in process environment.
+            dotenv_values = self._load_dotenv_values()
+            for key, value in dotenv_values.items():
+                if key not in env_values or not env_values.get(key, "").strip():
+                    env_values[key] = value
+
+            azure_endpoint = env_values.get("AZURE_OPENAI_ENDPOINT", "").strip()
+            azure_api_key = env_values.get("AZURE_OPENAI_API_KEY", "").strip()
+            azure_deployment = env_values.get("AZURE_OPENAI_DEPLOYMENT", "").strip()
+            azure_model = env_values.get("AZURE_OPENAI_MODEL", "").strip()
+            azure_api_version = env_values.get("OPENAI_API_VERSION", "").strip()
+            if not azure_api_version:
+                azure_api_version = env_values.get("AZURE_OPENAI_API_VERSION", "").strip()
+
+            if azure_api_version:
+                self.AZURE_API_VERSION = azure_api_version
+                self.stdout.println("[CONFIG] Azure API version set to %s" % self.AZURE_API_VERSION)
+
+            if azure_endpoint and azure_api_key:
+                # Prefer explicit saved provider unless it is still the default local Ollama setup.
+                if self.AI_PROVIDER == "Ollama" or not self.API_KEY:
+                    self.AI_PROVIDER = "Azure Foundry"
+                    self.API_URL = azure_endpoint
+                    self.API_KEY = azure_api_key
+
+                    if azure_deployment:
+                        self.MODEL = azure_deployment
+                    elif azure_model:
+                        self.MODEL = azure_model
+
+                    self.stdout.println("[CONFIG] Applied Azure Foundry settings from environment variables")
+                    if not (azure_deployment or azure_model):
+                        self.stdout.println("[CONFIG] Tip: set AZURE_OPENAI_DEPLOYMENT to auto-fill Model")
+        except Exception as e:
+            self.stderr.println("[!] Failed to apply environment config: %s" % e)
+
+    def _load_dotenv_values(self):
+        """Load key/value pairs from a nearby .env file if present."""
+        values = {}
+        try:
+            import os
+            candidate_paths = []
+
+            try:
+                candidate_paths.append(os.path.join(os.getcwd(), ".env"))
+            except:
+                pass
+
+            try:
+                if '__file__' in globals() and __file__:
+                    candidate_paths.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+            except:
+                pass
+
+            # Optional user-level fallback.
+            candidate_paths.append(os.path.join(os.path.expanduser("~"), ".silentchain.env"))
+
+            loaded_path = None
+            for path in candidate_paths:
+                if path and os.path.isfile(path):
+                    loaded_path = path
+                    break
+
+            if not loaded_path:
+                return values
+
+            with open(loaded_path, 'r') as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line or line.startswith('#') or '=' not in line:
+                        continue
+
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip()
+
+                    # Support optional 'export KEY=value' style.
+                    if key.startswith('export '):
+                        key = key[len('export '):].strip()
+
+                    if not key:
+                        continue
+
+                    # Strip surrounding quotes when present.
+                    if ((value.startswith('"') and value.endswith('"')) or
+                        (value.startswith("'") and value.endswith("'"))):
+                        value = value[1:-1]
+
+                    values[key] = value
+
+            self.stdout.println("[CONFIG] Loaded environment overrides from %s" % loaded_path)
+            return values
+        except Exception as e:
+            self.stderr.println("[!] Failed to read .env file: %s" % e)
+            return values
     
     def openUpgradePage(self, event):
         """Open updates page in browser"""
@@ -874,7 +981,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         aiPanel.add(JLabel("AI Provider:"), gbc)
         gbc.gridx = 1
         gbc.gridwidth = 2
-        providerCombo = JComboBox(["Ollama", "OpenAI", "Claude", "Gemini"])
+        providerCombo = JComboBox(["Ollama", "OpenAI", "Claude", "Gemini", "Azure Foundry"])
         providerCombo.setSelectedItem(self.AI_PROVIDER)
         
         # Auto-update API URL when provider changes
@@ -890,7 +997,8 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                     "Ollama": "http://localhost:11434",
                     "OpenAI": "https://api.openai.com/v1",
                     "Claude": "https://api.anthropic.com/v1",
-                    "Gemini": "https://generativelanguage.googleapis.com/v1"
+                    "Gemini": "https://generativelanguage.googleapis.com/v1",
+                    "Azure Foundry": "https://YOUR-RESOURCE.openai.azure.com"
                 }
                 if provider in default_urls:
                     self.urlField.setText(default_urls[provider])
@@ -1021,8 +1129,10 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             "Ollama: http://localhost:11434\n"
             "OpenAI: https://api.openai.com/v1\n"
             "Claude: https://api.anthropic.com/v1\n"
-            "Gemini: https://generativelanguage.googleapis.com/v1\n\n"
-            "API Keys required for: OpenAI, Claude, Gemini"
+            "Gemini: https://generativelanguage.googleapis.com/v1\n"
+            "Azure Foundry: https://YOUR-RESOURCE.openai.azure.com\n\n"
+            "API Keys required for: OpenAI, Claude, Gemini, Azure Foundry\n"
+            "For Azure Foundry, set Model to your deployment name"
         )
         helpText.setEditable(False)
         helpText.setBackground(aiPanel.getBackground())
@@ -1398,6 +1508,8 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 return self._test_claude_connection()
             elif self.AI_PROVIDER == "Gemini":
                 return self._test_gemini_connection()
+            elif self.AI_PROVIDER == "Azure Foundry":
+                return self._test_azure_foundry_connection()
             else:
                 self.stderr.println("[!] Unknown AI provider: %s" % self.AI_PROVIDER)
                 return False
@@ -1481,6 +1593,62 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         ]
         self.stdout.println("[AI CONNECTION] OK Gemini API configured")
         return True
+
+    def _test_azure_foundry_connection(self):
+        if not self.API_KEY:
+            self.stderr.println("[!] Azure Foundry API key required")
+            return False
+
+        if not self.API_URL:
+            self.stderr.println("[!] Azure Foundry API URL required")
+            return False
+
+        try:
+            base_url = self.API_URL.split('?', 1)[0].rstrip('/')
+
+            # Normalize to deployments listing endpoint for validation/model discovery.
+            if "/openai/deployments/" in base_url:
+                base_url = base_url.split("/openai/deployments/")[0]
+            if not base_url.endswith("/openai/deployments"):
+                base_url = base_url + "/openai/deployments"
+
+            deployments_url = self._append_api_version(base_url)
+            req = urllib2.Request(deployments_url)
+            req.add_header('Content-Type', 'application/json')
+            req.add_header('api-key', self.API_KEY)
+
+            response = urllib2.urlopen(req, timeout=10)
+            data = json.loads(response.read())
+
+            deployments = []
+            if isinstance(data, dict) and isinstance(data.get('data'), list):
+                for deployment in data.get('data'):
+                    if isinstance(deployment, dict):
+                        dep_name = deployment.get('id') or deployment.get('name')
+                        if dep_name:
+                            deployments.append(dep_name)
+
+            if deployments:
+                self.available_models = deployments
+                self.stdout.println("[AI CONNECTION] OK Connected to Azure Foundry")
+                self.stdout.println("[AI CONNECTION] Found %d deployment(s)" % len(self.available_models))
+
+                if self.MODEL not in self.available_models:
+                    old_model = self.MODEL
+                    self.MODEL = self.available_models[0]
+                    self.stdout.println("[AI CONNECTION] Deployment '%s' not found, using '%s'" %
+                                      (old_model, self.MODEL))
+                return True
+
+            # If API call succeeded but returned no deployments, keep current model/deployment name.
+            self.available_models = [self.MODEL] if self.MODEL else []
+            self.stdout.println("[AI CONNECTION] OK Azure Foundry API reachable")
+            self.stdout.println("[AI CONNECTION] No deployments returned - using configured deployment name")
+            return True
+
+        except Exception as e:
+            self.stderr.println("[!] Azure Foundry connection failed: %s" % e)
+            return False
     
     def print_logo(self):
         self.stdout.println("")
@@ -1996,6 +2164,8 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 return self._ask_claude(prompt)
             elif self.AI_PROVIDER == "Gemini":
                 return self._ask_gemini(prompt)
+            elif self.AI_PROVIDER == "Azure Foundry":
+                return self._ask_azure_foundry(prompt)
             else:
                 self.stderr.println("[!] Unknown AI provider: %s" % self.AI_PROVIDER)
                 return None
@@ -2118,6 +2288,52 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         resp = urllib2.urlopen(req, timeout=self.AI_REQUEST_TIMEOUT)
         data = json.loads(resp.read())
         return data["candidates"][0]["content"]["parts"][0]["text"]
+
+    def _append_api_version(self, url):
+        if "api-version=" in url:
+            return url
+        separator = '&' if '?' in url else '?'
+        version = self.AZURE_API_VERSION if self.AZURE_API_VERSION else "2024-06-01"
+        return url + separator + "api-version=%s" % version
+
+    def _ask_azure_foundry(self, prompt):
+        """Send request to Azure AI Foundry (Azure OpenAI-compatible chat completions API)."""
+        if not self.API_KEY:
+            raise Exception("Azure Foundry API key required")
+
+        if not self.API_URL:
+            raise Exception("Azure Foundry API URL required")
+
+        base_url = self.API_URL.split('?', 1)[0].rstrip('/')
+
+        if "/chat/completions" in base_url:
+            chat_url = base_url
+        elif "/openai/deployments/" in base_url:
+            chat_url = base_url + "/chat/completions"
+        else:
+            if not self.MODEL:
+                raise Exception("Azure Foundry deployment name is required in Model field")
+            deployment_name = urllib.quote(self.MODEL, safe='')
+            chat_url = "%s/openai/deployments/%s/chat/completions" % (base_url, deployment_name)
+
+        chat_url = self._append_api_version(chat_url)
+
+        req = urllib2.Request(
+            chat_url,
+            data=json.dumps({
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": self.MAX_TOKENS,
+                "temperature": 0.0
+            }).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "api-key": self.API_KEY
+            }
+        )
+
+        resp = urllib2.urlopen(req, timeout=self.AI_REQUEST_TIMEOUT)
+        data = json.loads(resp.read())
+        return data["choices"][0]["message"]["content"]
     
     def _fix_truncated_json(self, text):
         if not text: return "[]"

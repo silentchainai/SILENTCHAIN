@@ -12,6 +12,7 @@ Get up and running with SILENTCHAIN AI™ in under 5 minutes.
   - OpenAI API key
   - Claude API key
   - Gemini API key
+   - Azure Foundry API key
 
 ---
 
@@ -123,6 +124,14 @@ ollama pull deepseek-r1
 curl http://localhost:11434/api/tags
 ```
 
+### Validate Azure .env Configuration
+```bash
+./tools/test_azure_env.sh ./.env
+```
+
+Look for `STATUS: VALID` before testing in Burp.
+```
+
 ---
 
 ## Troubleshooting
@@ -137,7 +146,7 @@ curl http://localhost:11434/api/tags
 
 ✓ Check Ollama is running: `ollama list`  
 ✓ Verify API URL is correct  
-✓ For cloud providers, check API key
+✓ For cloud providers (OpenAI, Claude, Gemini, Azure Foundry), check API key
 
 ---
 
