@@ -1,5 +1,3 @@
-![SILENTCHAIN-AI-Intro.gif](images/SILENTCHAIN-AI-Intro.gif)
-
 # SILENTCHAIN AI™ - Community Edition
 
 <div align="center">
