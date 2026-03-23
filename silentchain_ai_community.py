@@ -112,6 +112,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         # Configuration file path (in user's home directory)
         import os
         self.config_file = os.path.join(os.path.expanduser("~"), ".silentchain_config.json")
+        self.vuln_cache_file = os.path.join(os.path.expanduser("~"), ".silentchain_vuln_cache.json")
         
         # AI Provider Settings (defaults - will be overridden by saved config)
         self.AI_PROVIDER = "Ollama"  # Options: Ollama, OpenAI, Claude, Gemini, Azure Foundry
@@ -150,6 +151,10 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         
         self.findings_cache = {}
         self.findings_lock = threading.Lock()
+
+        # Persistent vulnerability cache to reduce repeat AI calls across sessions
+        self.vuln_cache = {}
+        self.vuln_cache_lock = threading.Lock()
         
         # Context menu debounce
         self.context_menu_last_invoke = {}
@@ -168,6 +173,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.stats = {
             "total_requests": 0,
             "analyzed": 0,
+            "cached_reused": 0,
             "skipped_duplicate": 0,
             "skipped_rate_limit": 0,
             "skipped_low_confidence": 0,
@@ -178,6 +184,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
 
         # Create UI
         self.initUI()
+
+        # Load persistent cache after UI exists so status labels can reflect it
+        self.load_vuln_cache()
         
         self.log_to_console("=== SILENTCHAIN AI - Community Edition Initialized ===")
         self.log_to_console("Console panel is active and logging...")
@@ -242,6 +251,44 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         editionPanel.add(editionLabel)
         topPanel.add(editionPanel)
 
+        # Status strip (organized quick status at top)
+        statusPanel = JPanel(GridBagLayout())
+        statusPanel.setBorder(BorderFactory.createTitledBorder("Runtime Status"))
+        statusGbc = GridBagConstraints()
+        statusGbc.insets = Insets(3, 8, 3, 8)
+        statusGbc.anchor = GridBagConstraints.WEST
+
+        statusGbc.gridx = 0
+        statusGbc.gridy = 0
+        statusPanel.add(JLabel("Provider:"), statusGbc)
+        statusGbc.gridx = 1
+        self.providerStatusLabel = JLabel(self.AI_PROVIDER)
+        self.providerStatusLabel.setFont(Font("Monospaced", Font.BOLD, 11))
+        statusPanel.add(self.providerStatusLabel, statusGbc)
+
+        statusGbc.gridx = 2
+        statusPanel.add(JLabel("Model:"), statusGbc)
+        statusGbc.gridx = 3
+        self.modelStatusLabel = JLabel(self.MODEL)
+        self.modelStatusLabel.setFont(Font("Monospaced", Font.BOLD, 11))
+        statusPanel.add(self.modelStatusLabel, statusGbc)
+
+        statusGbc.gridx = 4
+        statusPanel.add(JLabel("Passive Scan:"), statusGbc)
+        statusGbc.gridx = 5
+        self.scanStatusLabel = JLabel("Enabled" if self.PASSIVE_SCANNING_ENABLED else "Disabled")
+        self.scanStatusLabel.setFont(Font("Monospaced", Font.BOLD, 11))
+        statusPanel.add(self.scanStatusLabel, statusGbc)
+
+        statusGbc.gridx = 6
+        statusPanel.add(JLabel("Cache Entries:"), statusGbc)
+        statusGbc.gridx = 7
+        self.cacheStatusLabel = JLabel("0")
+        self.cacheStatusLabel.setFont(Font("Monospaced", Font.BOLD, 11))
+        statusPanel.add(self.cacheStatusLabel, statusGbc)
+
+        topPanel.add(statusPanel)
+
         topPanel.add(Box.createRigidArea(Dimension(0, 10)))
         
         # Stats panel
@@ -255,6 +302,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         statNames = [
             ("total_requests", "Total Requests:"),
             ("analyzed", "Analyzed:"),
+            ("cached_reused", "Reused (Cache):"),
             ("skipped_duplicate", "Skipped (Duplicate):"),
             ("skipped_rate_limit", "Skipped (Rate Limit):"),
             ("skipped_low_confidence", "Skipped (Low Confidence):"),
@@ -277,8 +325,23 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         
         topPanel.add(statsPanel)
         
-        # Control panel
+        # Control panel (organized in two rows)
         controlPanel = JPanel()
+        controlPanel.setLayout(BoxLayout(controlPanel, BoxLayout.Y_AXIS))
+        primaryControls = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2))
+        secondaryControls = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2))
+        
+        # Start/Stop Scanning button
+        self.scanningButton = JButton("Stop Scanning", actionPerformed=self.toggleScanning)
+        self.scanningButton.setBackground(Color(0x2E, 0xCC, 0x71))
+        self.scanningButton.setForeground(Color.WHITE)
+        self.scanningButton.setOpaque(True)
+        
+        # Export Findings button
+        self.exportButton = JButton("Export Findings (CSV)", actionPerformed=self.exportFindings)
+        self.exportButton.setBackground(Color(0x3, 0x49, 0xA3))
+        self.exportButton.setForeground(Color.WHITE)
+        self.exportButton.setOpaque(True)
         
         # Settings button
         self.settingsButton = JButton("Settings", actionPerformed=self.openSettings)
@@ -296,12 +359,20 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.upgradeButton.setForeground(Color.WHITE)
         self.upgradeButton.setOpaque(True)
         
-        controlPanel.add(self.settingsButton)
-        controlPanel.add(self.clearButton)
-        controlPanel.add(self.cancelAllButton)
-        controlPanel.add(self.pauseAllButton)
-        controlPanel.add(self.upgradeButton)
+        primaryControls.add(self.scanningButton)
+        primaryControls.add(self.exportButton)
+        primaryControls.add(self.settingsButton)
+        primaryControls.add(self.clearButton)
+
+        secondaryControls.add(self.cancelAllButton)
+        secondaryControls.add(self.pauseAllButton)
+        secondaryControls.add(self.upgradeButton)
+
+        controlPanel.add(primaryControls)
+        controlPanel.add(secondaryControls)
         topPanel.add(controlPanel)
+
+        self._sync_scanning_button()
         
         self.panel.add(topPanel, BorderLayout.NORTH)
         
@@ -531,6 +602,15 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                     # Stats
                     for key, label in self.extender.statsLabels.items():
                         label.setText(str(stats_snapshot.get(key, 0)))
+
+                    # Runtime status
+                    self.extender.providerStatusLabel.setText(self.extender.AI_PROVIDER)
+                    self.extender.modelStatusLabel.setText(self.extender.MODEL)
+                    self.extender.scanStatusLabel.setText(
+                        "Enabled" if self.extender.PASSIVE_SCANNING_ENABLED else "Disabled"
+                    )
+                    with self.extender.vuln_cache_lock:
+                        self.extender.cacheStatusLabel.setText(str(len(self.extender.vuln_cache)))
 
                     # Task table
                     self.extender.taskTableModel.setRowCount(0)
@@ -807,6 +887,124 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         except Exception as e:
             self.stderr.println("[!] Failed to load config: %s" % e)
             self.stderr.println("[!] Using default settings")
+
+    def load_vuln_cache(self):
+        """Load persistent vulnerability cache from disk."""
+        try:
+            import os
+            if not os.path.exists(self.vuln_cache_file):
+                self.stdout.println("[CACHE] No persistent vulnerability cache found")
+                return
+
+            with open(self.vuln_cache_file, 'r') as f:
+                payload = json.load(f)
+
+            entries = payload.get("entries", {}) if isinstance(payload, dict) else {}
+            if not isinstance(entries, dict):
+                entries = {}
+
+            with self.vuln_cache_lock:
+                self.vuln_cache = entries
+
+            self.stdout.println("[CACHE] Loaded %d cached request signature(s)" % len(entries))
+            self._ui_dirty = True
+        except Exception as e:
+            self.stderr.println("[!] Failed to load vulnerability cache: %s" % e)
+
+    def save_vuln_cache(self):
+        """Persist vulnerability cache to disk."""
+        try:
+            with self.vuln_cache_lock:
+                cache_snapshot = dict(self.vuln_cache)
+            payload = {
+                "version": self.VERSION,
+                "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "entries": cache_snapshot
+            }
+            with open(self.vuln_cache_file, 'w') as f:
+                json.dump(payload, f, indent=2)
+            return True
+        except Exception as e:
+            self.stderr.println("[!] Failed to save vulnerability cache: %s" % e)
+            return False
+
+    def _get_request_signature(self, data):
+        """Build a stable request signature for persistent cache matching."""
+        base_url = str(data.get("url", "")).split('?', 1)[0]
+        param_names = sorted([p.get("name", "") for p in data.get("params_sample", []) if p.get("name")])
+
+        req_header_names = []
+        for header in data.get("request_headers", [])[:10]:
+            req_header_names.append(str(header).split(':', 1)[0].strip().lower())
+
+        res_header_names = []
+        for header in data.get("response_headers", [])[:10]:
+            res_header_names.append(str(header).split(':', 1)[0].strip().lower())
+
+        signature_obj = {
+            "provider": self.AI_PROVIDER,
+            "model": self.MODEL,
+            "method": data.get("method", ""),
+            "url": base_url,
+            "status": data.get("status", 0),
+            "mime_type": data.get("mime_type", ""),
+            "param_names": param_names,
+            "request_headers": sorted(req_header_names),
+            "response_headers": sorted(res_header_names)
+        }
+        encoded = json.dumps(signature_obj, sort_keys=True)
+        return hashlib.md5(encoded.encode('utf-8')).hexdigest()
+
+    def _get_cached_findings_for_signature(self, signature):
+        with self.vuln_cache_lock:
+            entry = self.vuln_cache.get(signature)
+            if not entry:
+                return None
+
+            # Track usage for observability
+            entry["last_seen"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            entry["hit_count"] = int(entry.get("hit_count", 0)) + 1
+
+            findings = entry.get("findings", [])
+            if not isinstance(findings, list):
+                findings = []
+
+        # Save usage metadata opportunistically
+        self.save_vuln_cache()
+        return findings
+
+    def _store_cached_findings(self, signature, url, findings):
+        """Store normalized findings for future cache hits."""
+        if isinstance(findings, dict):
+            findings = [findings]
+
+        normalized = []
+        for item in findings:
+            if not isinstance(item, dict):
+                continue
+            normalized.append({
+                "title": item.get("title", "AI Finding"),
+                "severity": item.get("severity", "information"),
+                "confidence": item.get("confidence", 50),
+                "detail": item.get("detail", ""),
+                "cwe": item.get("cwe", ""),
+                "owasp": item.get("owasp", ""),
+                "remediation": item.get("remediation", "")
+            })
+
+        if not normalized:
+            return
+
+        with self.vuln_cache_lock:
+            self.vuln_cache[signature] = {
+                "url": str(url).split('?', 1)[0],
+                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "hit_count": 0,
+                "findings": normalized
+            }
+
+        self.save_vuln_cache()
+        self._ui_dirty = True
     
     def save_config(self):
         """Save configuration to disk"""
@@ -937,6 +1135,79 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             self.stderr.println("[!] Failed to read .env file: %s" % e)
             return values
     
+    def toggleScanning(self, event):
+        """Toggle passive scanning on/off"""
+        self.PASSIVE_SCANNING_ENABLED = not self.PASSIVE_SCANNING_ENABLED
+        self._sync_scanning_button()
+
+        if self.PASSIVE_SCANNING_ENABLED:
+            self.stdout.println("\n[SCANNING] ENABLED - Passive scanning is now ON")
+        else:
+            self.stdout.println("\n[SCANNING] DISABLED - Passive scanning is now OFF")
+
+        if not self.save_config():
+            self.stderr.println("[!] Failed to save config")
+        self.refreshUI()
+
+    def _sync_scanning_button(self):
+        """Keep scan toggle label/color in sync with runtime state."""
+        if not hasattr(self, 'scanningButton'):
+            return
+        if self.PASSIVE_SCANNING_ENABLED:
+            self.scanningButton.setText("Stop Scanning")
+            self.scanningButton.setBackground(Color(0x2E, 0xCC, 0x71))
+        else:
+            self.scanningButton.setText("Start Scanning")
+            self.scanningButton.setBackground(Color(0xE7, 0x4C, 0x3C))
+        self.scanningButton.setForeground(Color.WHITE)
+        self.scanningButton.setOpaque(True)
+    
+    def exportFindings(self, event):
+        """Export findings to CSV file"""
+        if self.findingsTableModel.getRowCount() == 0:
+            self.stdout.println("\n[EXPORT] No findings to export")
+            return
+        
+        try:
+            import time
+            from javax.swing import JFileChooser
+            from java.io import File
+            
+            # Create file chooser
+            fileChooser = JFileChooser()
+            
+            # Set default filename with timestamp
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            fileChooser.setSelectedFile(File("SILENTCHAIN_Findings_%s.csv" % timestamp))
+            
+            result = fileChooser.showSaveDialog(self.panel)
+            
+            if result == JFileChooser.APPROVE_OPTION:
+                filepath = str(fileChooser.getSelectedFile().getAbsolutePath())
+                
+                # Write CSV
+                with open(filepath, 'w') as f:
+                    # Write header
+                    headers = []
+                    for col in range(self.findingsTableModel.getColumnCount()):
+                        headers.append(self.findingsTableModel.getColumnName(col))
+                    f.write(','.join(['"' + h + '"' for h in headers]) + '\n')
+                    
+                    # Write data rows
+                    for row in range(self.findingsTableModel.getRowCount()):
+                        values = []
+                        for col in range(self.findingsTableModel.getColumnCount()):
+                            val = str(self.findingsTableModel.getValueAt(row, col))
+                            # Escape quotes
+                            val = val.replace('"', '""')
+                            values.append('"' + val + '"')
+                        f.write(','.join(values) + '\n')
+                
+                self.stdout.println("\n[EXPORT] OK Findings exported to: %s" % filepath)
+                self.stdout.println("[EXPORT] Total findings: %d" % self.findingsTableModel.getRowCount())
+        except Exception as e:
+            self.stderr.println("[!] Export failed: %s" % e)
+
     def openUpgradePage(self, event):
         """Open updates page in browser"""
         self.stdout.println("\n[UPDATE] Checking for updates...")
@@ -1276,6 +1547,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             
             # Save Advanced settings
             self.PASSIVE_SCANNING_ENABLED = passiveScanCheck.isSelected()
+            self._sync_scanning_button()
             self.THEME = str(themeCombo.getSelectedItem())
             self.VERBOSE = verboseCheck.isSelected()
 
@@ -1604,51 +1876,101 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             return False
 
         try:
-            base_url = self.API_URL.split('?', 1)[0].rstrip('/')
+            endpoint_no_query = self.API_URL.split('?', 1)[0].rstrip('/')
 
-            # Normalize to deployments listing endpoint for validation/model discovery.
-            if "/openai/deployments/" in base_url:
-                base_url = base_url.split("/openai/deployments/")[0]
-            if not base_url.endswith("/openai/deployments"):
-                base_url = base_url + "/openai/deployments"
+            # Try deployments listing first for model discovery when endpoint supports it.
+            resource_root = endpoint_no_query
+            if "/openai/deployments/" in resource_root:
+                resource_root = resource_root.split("/openai/deployments/")[0]
+            elif "/openai/v1" in resource_root:
+                resource_root = resource_root.split("/openai/v1", 1)[0]
 
-            deployments_url = self._append_api_version(base_url)
-            req = urllib2.Request(deployments_url)
-            req.add_header('Content-Type', 'application/json')
-            req.add_header('api-key', self.API_KEY)
+            deployments_url = self._append_api_version(resource_root.rstrip('/') + "/openai/deployments")
+            try:
+                req = urllib2.Request(deployments_url)
+                req.add_header('Content-Type', 'application/json')
+                req.add_header('api-key', self.API_KEY)
 
-            response = urllib2.urlopen(req, timeout=10)
-            data = json.loads(response.read())
+                response = urllib2.urlopen(req, timeout=10)
+                data = json.loads(response.read())
 
-            deployments = []
-            if isinstance(data, dict) and isinstance(data.get('data'), list):
-                for deployment in data.get('data'):
-                    if isinstance(deployment, dict):
-                        dep_name = deployment.get('id') or deployment.get('name')
-                        if dep_name:
-                            deployments.append(dep_name)
+                deployments = []
+                if isinstance(data, dict) and isinstance(data.get('data'), list):
+                    for deployment in data.get('data'):
+                        if isinstance(deployment, dict):
+                            dep_name = deployment.get('id') or deployment.get('name')
+                            if dep_name:
+                                deployments.append(dep_name)
 
-            if deployments:
-                self.available_models = deployments
-                self.stdout.println("[AI CONNECTION] OK Connected to Azure Foundry")
-                self.stdout.println("[AI CONNECTION] Found %d deployment(s)" % len(self.available_models))
+                if deployments:
+                    self.available_models = deployments
+                    self.stdout.println("[AI CONNECTION] OK Connected to Azure Foundry")
+                    self.stdout.println("[AI CONNECTION] Found %d deployment(s)" % len(self.available_models))
 
-                if self.MODEL not in self.available_models:
-                    old_model = self.MODEL
-                    self.MODEL = self.available_models[0]
-                    self.stdout.println("[AI CONNECTION] Deployment '%s' not found, using '%s'" %
-                                      (old_model, self.MODEL))
+                    if self.MODEL not in self.available_models:
+                        old_model = self.MODEL
+                        self.MODEL = self.available_models[0]
+                        self.stdout.println("[AI CONNECTION] Deployment '%s' not found, using '%s'" %
+                                          (old_model, self.MODEL))
+                    return True
+
+                # Empty deployment list but API reachable.
+                self.available_models = [self.MODEL] if self.MODEL else []
+                self.stdout.println("[AI CONNECTION] OK Azure Foundry API reachable")
+                self.stdout.println("[AI CONNECTION] No deployments returned - using configured deployment name")
                 return True
+            except Exception as list_error:
+                if self.VERBOSE:
+                    self.stdout.println("[AI CONNECTION] Deployments listing unavailable, trying chat endpoint: %s" % list_error)
 
-            # If API call succeeded but returned no deployments, keep current model/deployment name.
-            self.available_models = [self.MODEL] if self.MODEL else []
-            self.stdout.println("[AI CONNECTION] OK Azure Foundry API reachable")
-            self.stdout.println("[AI CONNECTION] No deployments returned - using configured deployment name")
-            return True
+            # Fallback: test the chat completions endpoint directly.
+            chat_url = self._build_azure_chat_url(endpoint_no_query)
+            req = urllib2.Request(
+                self._append_api_version(chat_url),
+                data=json.dumps({
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1,
+                    "temperature": 0.0
+                }).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "api-key": self.API_KEY
+                }
+            )
+
+            try:
+                response = urllib2.urlopen(req, timeout=10)
+                if response.getcode() == 200:
+                    self.available_models = [self.MODEL] if self.MODEL else []
+                    self.stdout.println("[AI CONNECTION] OK Connected to Azure Foundry (chat endpoint)")
+                    return True
+            except urllib2.HTTPError as he:
+                # 429 still means endpoint/key/deployment are valid but rate-limited.
+                if he.code == 429:
+                    self.available_models = [self.MODEL] if self.MODEL else []
+                    self.stdout.println("[AI CONNECTION] OK Azure Foundry reachable (rate limited)")
+                    return True
+                raise
+
+            return False
 
         except Exception as e:
             self.stderr.println("[!] Azure Foundry connection failed: %s" % e)
             return False
+
+    def _build_azure_chat_url(self, endpoint_no_query):
+        """Build Azure chat-completions URL from either full endpoint or resource root."""
+        base_url = endpoint_no_query.rstrip('/')
+
+        if "/chat/completions" in base_url:
+            return base_url
+        if "/openai/deployments/" in base_url:
+            return base_url + "/chat/completions"
+        if not self.MODEL:
+            raise Exception("Azure Foundry deployment name is required in Model field")
+
+        deployment_name = urllib.quote(self.MODEL, safe='')
+        return "%s/openai/deployments/%s/chat/completions" % (base_url, deployment_name)
     
     def print_logo(self):
         self.stdout.println("")
@@ -1906,152 +2228,181 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 "response_body": res_body
             }
 
-            if self.VERBOSE:
-                self.stdout.println("[%s] Analyzing (NEW)" % source)
+            request_signature = self._get_request_signature(data)
 
-            ai_text = self.ask_ai(self.build_prompt(data))
-            
-            if not ai_text:
+            # Persistent cache lookup (reduces repeat AI calls across sessions)
+            cached_findings = None
+            if not bypass_dedup:
+                cached_findings = self._get_cached_findings_for_signature(request_signature)
+
+            if cached_findings:
+                findings = cached_findings
+                self.updateStats("cached_reused")
+                self.updateStats("analyzed")
                 if self.VERBOSE:
-                    self.stdout.println("[%s] [ERROR] No AI response" % source)
-                if task_id is not None:
-                    self.updateTask(task_id, "Error (No AI Response)")
-                self.updateStats("errors")
-                return
+                    self.stdout.println(
+                        "[%s] [CACHE HIT] %s | signature=%s | findings=%d | no API call" %
+                        (source, url_str, request_signature[:12], len(findings))
+                    )
+            else:
+                if self.VERBOSE:
+                    self.stdout.println(
+                        "[%s] [AI REQUEST] method=%s status=%s params=%d reqBody=%dB resBody=%dB" %
+                        (source, data.get("method", "?"), data.get("status", "?"),
+                         data.get("params_count", 0), len(req_body), len(res_body))
+                    )
+                    self.stdout.println(
+                        "[%s] [AI REQUEST] reqHeaders=%d resHeaders=%d model=%s" %
+                        (source, len(req_headers), len(res_headers), self.MODEL)
+                    )
 
-            self.updateStats("analyzed")
+                if self.VERBOSE:
+                    self.stdout.println("[%s] Analyzing (NEW)" % source)
 
-            ai_text = ai_text.strip()
-            
-            if ai_text.startswith("```"):
-                import re
-                ai_text = re.sub(r'^```(?:json)?\n?|```$', '', ai_text, flags=re.MULTILINE).strip()
-            
-            start = ai_text.find('[')
-            end = ai_text.rfind(']')
-            if start != -1 and end != -1:
-                ai_text = ai_text[start:end + 1]
-            elif ai_text.find('{') != -1:
-                obj_start = ai_text.find('{')
-                obj_end = ai_text.rfind('}')
-                if obj_start != -1 and obj_end != -1:
-                    ai_text = '[' + ai_text[obj_start:obj_end + 1] + ']'
+                ai_text = self.ask_ai(self.build_prompt(data))
 
-            try:
-                findings = json.loads(ai_text)
-            except ValueError as e:
-                self.stderr.println("[!] JSON parse error: %s" % e)
-                self.stderr.println("[!] Attempting to repair malformed JSON...")
-                
-                # Try multiple repair strategies
-                repaired = False
-                
-                try:
-                    import re
-                    original_text = ai_text
-                    
-                    # Strategy 1: Fix unterminated strings by adding closing quotes
-                    lines = ai_text.split('\n')
-                    fixed_lines = []
-                    for line in lines:
-                        # Skip empty lines
-                        if not line.strip():
-                            fixed_lines.append(line)
-                            continue
-                        
-                        # Count unescaped quotes
-                        quote_positions = []
-                        i = 0
-                        while i < len(line):
-                            if line[i] == '"' and (i == 0 or line[i-1] != '\\'):
-                                quote_positions.append(i)
-                            i += 1
-                        
-                        # If odd number of quotes, try to fix
-                        if len(quote_positions) % 2 == 1:
-                            # Add closing quote before trailing comma/bracket/brace
-                            line = line.rstrip()
-                            if line.endswith(',') or line.endswith('}') or line.endswith(']'):
-                                line = line[:-1] + '"' + line[-1]
-                            elif not line.endswith('"'):
-                                line = line + '"'
-                        
-                        fixed_lines.append(line)
-                    
-                    ai_text = '\n'.join(fixed_lines)
-                    
-                    # Strategy 2: Remove trailing commas
-                    ai_text = re.sub(r',(\s*[}\]])', r'\1', ai_text)
-                    
-                    # Strategy 3: Ensure valid array structure
-                    ai_text = ai_text.strip()
-                    if not ai_text.startswith('['):
-                        if ai_text.startswith('{'):
-                            ai_text = '[' + ai_text
-                        else:
-                            # Find first {
-                            start_obj = ai_text.find('{')
-                            if start_obj != -1:
-                                ai_text = '[' + ai_text[start_obj:]
-                    
-                    if not ai_text.endswith(']'):
-                        if ai_text.endswith('}'):
-                            ai_text = ai_text + ']'
-                        else:
-                            # Find last }
-                            end_obj = ai_text.rfind('}')
-                            if end_obj != -1:
-                                ai_text = ai_text[:end_obj+1] + ']'
-                    
-                    # Strategy 4: Remove any garbage after final ]
-                    final_bracket = ai_text.rfind(']')
-                    if final_bracket != -1 and final_bracket < len(ai_text) - 1:
-                        ai_text = ai_text[:final_bracket + 1]
-                    
-                    # Try parsing repaired JSON
-                    findings = json.loads(ai_text)
-                    repaired = True
-                    self.stdout.println("[+] JSON successfully repaired")
-                    
-                except Exception as repair_error:
-                    self.stderr.println("[!] JSON repair failed: %s" % repair_error)
-                
-                if not repaired:
-                    # Last resort: try to extract any valid JSON objects
-                    self.stderr.println("[!] Attempting last-resort JSON extraction...")
-                    try:
-                        import re
-                        # Find all {...} objects
-                        objects = re.findall(r'\{[^}]+\}', original_text, re.DOTALL)
-                        if objects:
-                            # Try each object
-                            findings = []
-                            for obj_str in objects[:5]:  # Limit to first 5
-                                try:
-                                    obj = json.loads(obj_str)
-                                    findings.append(obj)
-                                except:
-                                    pass
-                            
-                            if findings:
-                                self.stdout.println("[+] Extracted %d valid objects from malformed JSON" % len(findings))
-                                repaired = True
-                    except:
-                        pass
-                
-                if not repaired:
-                    self.stderr.println("[!] All repair attempts failed - skipping this analysis")
-                    self.stderr.println("[!] AI response was too malformed to parse")
+                if not ai_text:
                     if self.VERBOSE:
-                        self.stderr.println("[DEBUG] Failed response (first 1000 chars):")
-                        self.stderr.println(original_text[:1000])
+                        self.stdout.println("[%s] [ERROR] No AI response" % source)
                     if task_id is not None:
-                        self.updateTask(task_id, "Error (JSON Parse Failed)")
+                        self.updateTask(task_id, "Error (No AI Response)")
                     self.updateStats("errors")
                     return
+
+                self.updateStats("analyzed")
+
+                ai_text = ai_text.strip()
+                if self.VERBOSE:
+                    self.stdout.println("[%s] [AI RESPONSE] received=%d chars" % (source, len(ai_text)))
+
+                if ai_text.startswith("```"):
+                    import re
+                    ai_text = re.sub(r'^```(?:json)?\n?|```$', '', ai_text, flags=re.MULTILINE).strip()
+
+                start = ai_text.find('[')
+                end = ai_text.rfind(']')
+                if start != -1 and end != -1:
+                    ai_text = ai_text[start:end + 1]
+                elif ai_text.find('{') != -1:
+                    obj_start = ai_text.find('{')
+                    obj_end = ai_text.rfind('}')
+                    if obj_start != -1 and obj_end != -1:
+                        ai_text = '[' + ai_text[obj_start:obj_end + 1] + ']'
+
+                try:
+                    findings = json.loads(ai_text)
+                except ValueError as e:
+                    self.stderr.println("[!] JSON parse error: %s" % e)
+                    self.stderr.println("[!] Attempting to repair malformed JSON...")
+
+                    # Try multiple repair strategies
+                    repaired = False
+
+                    try:
+                        import re
+                        original_text = ai_text
+
+                        # Strategy 1: Fix unterminated strings by adding closing quotes
+                        lines = ai_text.split('\n')
+                        fixed_lines = []
+                        for line in lines:
+                            if not line.strip():
+                                fixed_lines.append(line)
+                                continue
+
+                            quote_positions = []
+                            i = 0
+                            while i < len(line):
+                                if line[i] == '"' and (i == 0 or line[i-1] != '\\'):
+                                    quote_positions.append(i)
+                                i += 1
+
+                            if len(quote_positions) % 2 == 1:
+                                line = line.rstrip()
+                                if line.endswith(',') or line.endswith('}') or line.endswith(']'):
+                                    line = line[:-1] + '"' + line[-1]
+                                elif not line.endswith('"'):
+                                    line = line + '"'
+
+                            fixed_lines.append(line)
+
+                        ai_text = '\n'.join(fixed_lines)
+                        ai_text = re.sub(r',(\s*[}\]])', r'\1', ai_text)
+
+                        ai_text = ai_text.strip()
+                        if not ai_text.startswith('['):
+                            if ai_text.startswith('{'):
+                                ai_text = '[' + ai_text
+                            else:
+                                start_obj = ai_text.find('{')
+                                if start_obj != -1:
+                                    ai_text = '[' + ai_text[start_obj:]
+
+                        if not ai_text.endswith(']'):
+                            if ai_text.endswith('}'):
+                                ai_text = ai_text + ']'
+                            else:
+                                end_obj = ai_text.rfind('}')
+                                if end_obj != -1:
+                                    ai_text = ai_text[:end_obj+1] + ']'
+
+                        final_bracket = ai_text.rfind(']')
+                        if final_bracket != -1 and final_bracket < len(ai_text) - 1:
+                            ai_text = ai_text[:final_bracket + 1]
+
+                        findings = json.loads(ai_text)
+                        repaired = True
+                        self.stdout.println("[+] JSON successfully repaired")
+
+                    except Exception as repair_error:
+                        self.stderr.println("[!] JSON repair failed: %s" % repair_error)
+
+                    if not repaired:
+                        self.stderr.println("[!] Attempting last-resort JSON extraction...")
+                        try:
+                            import re
+                            objects = re.findall(r'\{[^}]+\}', original_text, re.DOTALL)
+                            if objects:
+                                findings = []
+                                for obj_str in objects[:5]:
+                                    try:
+                                        obj = json.loads(obj_str)
+                                        findings.append(obj)
+                                    except:
+                                        pass
+
+                                if findings:
+                                    self.stdout.println("[+] Extracted %d valid objects from malformed JSON" % len(findings))
+                                    repaired = True
+                        except:
+                            pass
+
+                    if not repaired:
+                        self.stderr.println("[!] All repair attempts failed - skipping this analysis")
+                        self.stderr.println("[!] AI response was too malformed to parse")
+                        if self.VERBOSE:
+                            self.stderr.println("[DEBUG] Failed response (first 1000 chars):")
+                            self.stderr.println(original_text[:1000])
+                        if task_id is not None:
+                            self.updateTask(task_id, "Error (JSON Parse Failed)")
+                        self.updateStats("errors")
+                        return
+
+                # Store fresh AI result in persistent cache for future reuse
+                self._store_cached_findings(request_signature, url, findings)
             
             if not isinstance(findings, list):
                 findings = [findings]
+
+            if self.VERBOSE:
+                sample_titles = []
+                for f_item in findings[:3]:
+                    if isinstance(f_item, dict):
+                        sample_titles.append(str(f_item.get("title", "AI Finding"))[:40])
+                summary = ", ".join(sample_titles) if sample_titles else "none"
+                self.stdout.println(
+                    "[%s] [AI PARSED] findings=%d sample=%s" % (source, len(findings), summary)
+                )
 
             created = 0
             skipped_dup = 0
@@ -2305,16 +2656,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             raise Exception("Azure Foundry API URL required")
 
         base_url = self.API_URL.split('?', 1)[0].rstrip('/')
-
-        if "/chat/completions" in base_url:
-            chat_url = base_url
-        elif "/openai/deployments/" in base_url:
-            chat_url = base_url + "/chat/completions"
-        else:
-            if not self.MODEL:
-                raise Exception("Azure Foundry deployment name is required in Model field")
-            deployment_name = urllib.quote(self.MODEL, safe='')
-            chat_url = "%s/openai/deployments/%s/chat/completions" % (base_url, deployment_name)
+        chat_url = self._build_azure_chat_url(base_url)
 
         chat_url = self._append_api_version(chat_url)
 
