@@ -96,6 +96,17 @@ class AnalyzeTask(Runnable):
     def run(self):
         self.extender.analyze(self.messageInfo, self.url_str, self.task_id)
 
+class ForcedAnalyzeTask(Runnable):
+    """Runnable wrapper for forced analysis (context menu) that bypasses deduplication."""
+    def __init__(self, extender, messageInfo, url_str, task_id):
+        self.extender = extender
+        self.messageInfo = messageInfo
+        self.url_str = url_str
+        self.task_id = task_id
+    
+    def run(self):
+        self.extender.analyze_forced(self.messageInfo, self.url_str, self.task_id)
+
 class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMenuFactory):
     def registerExtenderCallbacks(self, callbacks):
         self.callbacks = callbacks
@@ -912,7 +923,8 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         """Migrate config from old format to new."""
         # v1 -> v2: No breaking changes in this release, just add version number
         old_config["config_version"] = self.CONFIG_VERSION
-        self.save_config()  # Persist migrated version
+        # Don't call save_config() here — stdout not ready yet during initial load
+        # Migration will auto-persist when user saves settings
         return old_config
 
     def load_vuln_cache(self):
@@ -956,20 +968,23 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             return False
 
     def _async_save_cache(self):
-        """Non-blocking background write if cache is dirty. Safety: check before spawning thread."""
+        """Non-blocking background write if cache is dirty. Prevents race conditions during shutdown."""
         if not self._cache_dirty:
             return
+        
+        self._cache_dirty = False  # Optimistic clear before spawn
         
         def background_save():
             try:
                 self.save_vuln_cache()
-            except:
-                pass
+            except Exception as e:
+                # Re-queue on failure so we retry on next timer tick
+                self._cache_dirty = True
+                self.stderr.println("[!] Background cache save failed: %s" % e)
         
         t = threading.Thread(target=background_save)
         t.setDaemon(True)
         t.start()
-        self._cache_dirty = False
 
     def _get_request_signature(self, data):
         """Build a stable request signature for persistent cache matching."""
@@ -1059,7 +1074,8 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 "findings": normalized
             }
 
-        self.save_vuln_cache()
+        # Set dirty flag for async write-behind (don't block analysis thread on disk I/O)
+        self._cache_dirty = True
         self._ui_dirty = True
     
     def save_config(self):
@@ -1751,7 +1767,8 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 request_bytes = message.getRequest()
                 if request_bytes:
                     import hashlib
-                    request_hash = hashlib.md5(request_bytes.tostring()).hexdigest()[:8]
+                    # Use SHA-256 instead of MD5 for better hash quality
+                    request_hash = hashlib.sha256(bytes(request_bytes.tostring())).hexdigest()[:8]
                     unique_key = "%s|%s" % (url_str, request_hash)
                 else:
                     unique_key = url_str
@@ -1803,10 +1820,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 
                 self.stdout.println("[CONTEXT MENU] Running analysis...")
                 task_id = self.addTask("CONTEXT", url_str, "Queued", message)
-                # Use special forced analysis that bypasses deduplication
-                t = threading.Thread(target=self.analyze_forced, args=(message, url_str, task_id))
-                t.setDaemon(True)
-                t.start()
+                # Use thread pool for forced analysis (context menu always forces analysis)
+                task = ForcedAnalyzeTask(self, message, url_str, task_id)
+                self.thread_pool.submit(task)
             except Exception as e:
                 self.stderr.println("[!] Context menu error: %s" % e)
 
@@ -1883,16 +1899,53 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             return False
     
     def _test_claude_connection(self):
+        """Test Claude API connection with actual API call."""
         if not self.API_KEY:
             self.stderr.println("[!] Claude API key required")
             return False
         
-        self.available_models = [
-            "claude-3-5-sonnet-20241022",
-            "claude-3-opus-20240229",
-            "claude-3-sonnet-20240229"
-        ]
-        self.stdout.println("[AI CONNECTION] OK Claude API configured")
+        try:
+            # Send actual test request to API
+            req = urllib2.Request(
+                self.API_URL.rstrip('/') + "/messages",
+                data=json.dumps({
+                    "model": self.MODEL or "claude-3-5-sonnet-20241022",
+                    "max_tokens": 5,
+                    "messages": [{"role": "user", "content": "ping"}]
+                }).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": self.API_KEY,
+                    "anthropic-version": "2023-06-01"
+                }
+            )
+            
+            resp = urllib2.urlopen(req, timeout=10)
+            if resp.getcode() == 200:
+                self.stdout.println("[AI CONNECTION] OK Claude API verified")
+                # Parse response to get available models info
+                self.available_models = [
+                    "claude-3-5-sonnet-20241022",
+                    "claude-3-opus-20240229",
+                    "claude-3-sonnet-20240229"
+                ]
+                return True
+        except urllib2.HTTPError as e:
+            if e.code == 429:
+                # Rate limited but key and endpoint are valid
+                self.stdout.println("[AI CONNECTION] OK Claude API reachable (rate limited)")
+                self.available_models = [
+                    "claude-3-5-sonnet-20241022",
+                    "claude-3-opus-20240229",
+                    "claude-3-sonnet-20240229"
+                ]
+                return True
+            else:
+                self.stderr.println("[!] Claude API error: %s" % e)
+                return False
+        except Exception as e:
+            self.stderr.println("[!] Claude connection failed: %s" % e)
+            return False
         return True
     
     def _test_gemini_connection(self):
@@ -2054,9 +2107,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             url_str = "Unknown"
 
         task_id = self.addTask("PASSIVE", url_str, "Queued", baseRequestResponse)
-        t = threading.Thread(target=self.analyze, args=(baseRequestResponse, url_str, task_id))
-        t.setDaemon(True)
-        t.start()
+        # Use thread pool instead of raw threading to prevent resource exhaustion
+        task = AnalyzeTask(self, baseRequestResponse, url_str, task_id)
+        self.thread_pool.submit(task)
         return None
 
     def doActiveScan(self, baseRequestResponse, insertionPoint):
@@ -2144,10 +2197,11 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         host = self._extract_host_from_url(url_str or "unknown")
         host_sem = self.get_host_semaphore(host)
         
-        # Acquire global pool cap first, then per-host limit
-        self.global_semaphore.acquire()
+        # Acquire host semaphore first (narrow), then global (wide) to prevent deadlock
+        host_sem.acquire()
         try:
-            with host_sem:
+            self.global_semaphore.acquire()
+            try:
                 try:
                     time_since_last = time.time() - self.last_request_time
                     if time_since_last < self.min_delay:
@@ -2171,8 +2225,10 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                     self.updateStats("errors")
                 finally:
                     self.refreshUI()
+            finally:
+                self.global_semaphore.release()
         finally:
-            self.global_semaphore.release()
+            host_sem.release()
 
     def analyze_forced(self, messageInfo, url_str=None, task_id=None):
         """
@@ -2300,6 +2356,21 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 signals.append({"type": "numeric_param", "params": numeric_params[:3]})
             if uuid_params:
                 signals.append({"type": "uuid_param", "params": uuid_params[:3]})
+            
+            # Check for common IDOR parameter names (easy wins for pentesters)
+            IDOR_PARAM_NAMES = {
+                'id', 'user_id', 'account_id', 'order_id', 'invoice_id',
+                'file_id', 'doc_id', 'record_id', 'item_id', 'uid', 'pid',
+                'customer_id', 'profile_id', 'token', 'ref', 'key'
+            }
+            idor_named_params = []
+            for p in params_sample:
+                name = p.get("name", "").lower()
+                # Check if param name matches common IDOR patterns
+                if any(idor_name == name or name.endswith('_' + idor_name) for idor_name in IDOR_PARAM_NAMES):
+                    idor_named_params.append({"name": p.get("name"), "value": p.get("value", "")[:20]})
+            if idor_named_params:
+                signals.append({"type": "idor_param_name", "params": idor_named_params[:5]})
         
         except:
             pass
@@ -2309,11 +2380,13 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
     def _get_url_hash(self, url, params):
         param_names = sorted([p.getName() for p in params])
         normalized = str(url).split('?')[0] + '|' + '|'.join(param_names)
-        return hashlib.md5(normalized.encode('utf-8')).hexdigest()
+        # Use SHA-256 instead of MD5 for better cryptographic security
+        return hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:32]
 
     def _get_finding_hash(self, url, title, cwe, param_name=""):
         key = "%s|%s|%s|%s" % (str(url).split('?')[0], title.lower().strip(), cwe, param_name)
-        return hashlib.md5(key.encode('utf-8')).hexdigest()
+        # Use SHA-256 instead of MD5 for better cryptographic security
+        return hashlib.sha256(key.encode('utf-8')).hexdigest()
 
     def _parse_ai_response(self, ai_text):
         """Parse AI response into findings list. Handles repair of malformed JSON."""
@@ -2589,6 +2662,11 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 detail_parts.append("<b>Description:</b><br>%s<br>" % detail)
                 detail_parts.append("<br><b>AI Confidence:</b> %d%%<br>" % ai_conf)
                 
+                # Add AI-identified vulnerable parameter if present
+                ai_param = item.get("param", "")
+                if ai_param:
+                    detail_parts.append("<br><b>Vulnerable Parameter (AI):</b> <code>%s</code><br>" % ai_param)
+                
                 # Add evidence field if present
                 if item.get("evidence"):
                     evidence_text = str(item.get("evidence", ""))[:500]
@@ -2651,6 +2729,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             "10. Business Logic flaws - price/quantity params, role/permission params, discount logic\n"
             "11. Information Disclosure - stack traces, internal IPs, API keys, secrets in responses\n"
             "12. Prototype Pollution - __proto__, constructor in JSON params, Object.assign usage\n"
+            "13. Missing security headers - CSP, HSTS, X-Frame-Options, X-Content-Type-Options\n"
+            "14. Sensitive data in responses - PII, tokens, internal paths, debug info\n"
+            "15. API versioning issues - v1/v2 endpoints with different access controls\n"
             "Flag confidence=0 if no evidence. Only report confidence>=50.\n"
             "Format: [{\"title\":str,\"severity\":\"High|Medium|Low|Information\","
             "\"confidence\":0-100,\"detail\":str,\"cwe\":str,"

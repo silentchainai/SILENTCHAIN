@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Critical (P0)
+- **CRITICAL: `doPassiveScan()` bypasses thread pool** - Raw threading spawned in passive scan ignored the thread pool entirely
+  - Changed from `threading.Thread(target=self.analyze, ...)` to thread pool submission
+  - Now properly queues all passive scan analysis through `AnalyzeTask` and thread pool
+  - Prevents resource exhaustion from unlimited thread spawning
+- **CRITICAL: Semaphore deadlock risk** - Global and per-host semaphores acquired in wrong order
+  - Changed acquisition order: now acquires host semaphore before global (narrow before wide)
+  - Prevents threads holding global slots from blocking on host locks
+  - Eliminates silent hangs under concurrent load
+- **CRITICAL: `_migrate_config()` crashes on startup** - Calls `save_config()` before `stdout` wrapper is initialized
+  - Removed `save_config()` call from `_migrate_config()` — migration auto-persists on next settings save
+  - Prevents `AttributeError` on stdout access during initial config load
+
+### Fixed - High (P1)
+- **`_store_cached_findings()` blocks analysis threads with synchronous disk writes** - Every finding triggered immediate file I/O
+  - Changed to set `_cache_dirty = True` flag only, letting async timer handle writes
+  - Removed `self.save_vuln_cache()` blocking call
+  - Analysis threads now proceed without waiting for disk I/O
+- **`_async_save_cache()` race condition** - Cache dirty flag cleared before background write could complete
+  - Now clears flag optimistically before spawn (acceptable for async write)
+  - Background thread re-queues on failure by setting `_cache_dirty = True` again
+  - Added exception handling to prevent lost findings
+- **Context menu analysis still uses raw threading** - `analyzeFromContextMenu()` spawned threads instead of using pool
+  - Created `ForcedAnalyzeTask` runnable class for context menu operations
+  - Now submits through thread pool like passive scan (after fix)
+- **MD5 still used in 3 places** - Weak hash in request/finding signature generation
+  - `_get_url_hash()`: Changed MD5 → SHA-256 (took first 32 chars for compatibility)
+  - `_get_finding_hash()`: Changed MD5 → SHA-256 (full hash)
+  - `_analyzeFromContextMenuThread()`: Changed MD5 → SHA-256 for request hash
+  - Improves collision resistance and security posture
+- **AI response `param` field ignored** - Prompt asks AI to identify vulnerable parameters but findings never displayed them
+  - Added extraction of `ai_param = item.get("param", "")` from AI findings
+  - Now displays as `<b>Vulnerable Parameter (AI):</b> <code>{param}</code>` in finding details
+  - Helps pentesters quickly identify the exact vulnerable parameter
+
+### Added - Medium (P2)
+- **Security header coverage** - Added AI prompt categories for common header misconfigurations
+  - New categories: "Missing security headers - CSP, HSTS, X-Frame-Options, X-Content-Type-Options"
+  - New categories: "Sensitive data in responses - PII, tokens, internal paths, debug info"
+  - New categories: "API versioning issues - v1/v2 endpoints with different access controls"
+  - AI now checks response headers systematically
+- **IDOR parameter detection** - Detects common IDOR-vulnerable parameter names
+  - Checks for patterns: `id`, `user_id`, `account_id`, `order_id`, `invoice_id`, `file_id`, `doc_id`, `record_id`, `item_id`, `uid`, `pid`, `customer_id`, `profile_id`, `token`, `ref`, `key`
+  - Generates IDOR signal when detected: `{"type": "idor_param_name", "name": "...", "value": "..."}`
+  - Complements numeric ID detection for better IDOR findings
+
+### Improved - Low (P3)
+- **Claude connection test was fake** - `_test_claude_connection()` hardcoded success without verifying API
+  - Now sends actual test request: `{"model": "...", "max_tokens": 5, "messages": [{"role": "user", "content": "ping"}]}`
+  - Properly handles HTTP 429 (rate limited but reachable) vs actual failures
+  - Prints clear feedback: "OK Claude API verified" or specific error message
+  - Catches both connection and rate-limit conditions
+
 ### Planned
 - Stream AI responses for faster perceived performance
 - Support for custom AI models (local fine-tuned models)
