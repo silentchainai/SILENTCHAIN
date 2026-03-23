@@ -155,7 +155,6 @@ Look for `STATUS: VALID` before testing in Burp.
 - **Read the [User Guide](docs/USER_GUIDE.md)** for detailed usage
 - **Join [Discord](https://discord.gg/silentchain)** for community support
 - **Star the repo** to stay updated
-- **Upgrade to Professional** for active verification
 
 ---
 

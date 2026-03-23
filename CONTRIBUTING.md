@@ -12,9 +12,10 @@ This project is **source-visible but proprietary**. To protect the integrity of 
 
 ## Contact
 
-For questions, business inquiries, or information about commercial/professional editions, please contact:
+For questions or support, please:
 
-support@silentchain.ai
+- Open an issue on the GitHub repository
+- Join our [Discord community](https://discord.gg/silentchain)
 
 ## Maintainer Validation
 

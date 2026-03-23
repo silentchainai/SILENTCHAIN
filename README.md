@@ -14,9 +14,7 @@
 
 *Intelligent • Silent • Adaptive • Comprehensive*
 
-[🚀 Getting Started](#-quick-start) • [📖 Documentation](#-documentation) • [🔧 Configuration](#-configuration) • [📊 Benchmarks](BENCHMARK.md) • [⬆️ Upgrade to Pro](https://silentchain.ai)
-
-[![Watch the Professional Demo](https://img.shields.io/badge/▶_Watch_Demo-SILENTCHAIN_Professional-red?style=for-the-badge&logo=youtube)](https://youtu.be/yWJK4CvS5pE)
+[🚀 Getting Started](#-quick-start) • [📖 Documentation](#-documentation) • [🔧 Configuration](#-configuration) • [📊 Benchmarks](BENCHMARK.md)
 
 </div>
 
@@ -26,7 +24,7 @@
 ![SILENTCHAINAI-burp-findings1.PNG](images/SILENTCHAINAI-burp-findings1.PNG)
 ---
 
-> **Note:** This is the Community Edition. Commercial and Professional Editions with advanced features are available separately.
+> **Note:** This is the Community Edition of SILENTCHAIN AI.
 
 ## 🌟 Overview
 
@@ -350,21 +348,6 @@ This forces analysis even if the URL was previously scanned.
 | **Automatic Fuzzing** | ❌ | ✅ |
 | **Priority Support** | ❌ | ✅ |
 
-### ⬆️ Upgrade to Professional
-
-**SILENTCHAIN Professional** adds active verification capabilities:
-
-- 🎯 **Phase 2 Verification**: Automatically validates findings with exploit payloads
-- 🛡️ **WAF Detection**: Identifies and adapts to web application firewalls
-- 📚 **Curated Payload Libraries**: Battle-tested OWASP payloads
-- 🌐 **OOB Testing**: Detects blind vulnerabilities (SSRF, XXE, etc.)
-- 🔄 **Burp Intruder Integration**: Auto-configures fuzzing attacks
-- ⚡ **Smart Fuzzing**: AI-generated payloads for maximum coverage
-
-[![Watch the Professional Demo](https://img.shields.io/badge/▶_Watch_Demo-SILENTCHAIN_Professional-red?style=for-the-badge&logo=youtube)](https://youtu.be/yWJK4CvS5pE)
-
-**See it in action** — watch the full [SILENTCHAIN Professional demo](https://youtu.be/yWJK4CvS5pE) to see AI-powered active verification, WAF evasion, and automated fuzzing at work.
-
 **Contact us for commercial licensing and professional editions:** support@sn1persecurity.com
 
 ---
@@ -511,7 +494,7 @@ Inspired by the security community's dedication to making the web safer.
 
 **SILENTCHAIN AI™** - *Intelligent Security Testing for the Modern Web*
 
-[Website](https://silentchain.ai) • [Documentation](#-documentation) • [Professional Edition](https://silentchain.ai/) • [Professional Demo](https://youtu.be/yWJK4CvS5pE)
+[Documentation](#-documentation) • [Issues](https://github.com/SILENTCHAIN/silentchain-ai/issues) • [Discord Community](https://discord.gg/silentchain)
 
 **Copyright © 2026 SN1PERSECURITY LLC. All rights reserved.**
 

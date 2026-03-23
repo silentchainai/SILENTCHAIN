@@ -496,11 +496,6 @@ ollama serve
 ### Community Support
 - [GitHub Issues](https://github.com/silentchainai/SILENTCHAIN/issues)
 - [Discord Community](https://discord.gg/silentchain)
-- Email: support@silentchain.ai
-
-### Professional Support
-Upgrade to SILENTCHAIN Professional for priority support:
-- [silentchain.ai/pro](https://silentchain.ai/pro)
 
 ---
 

@@ -6,7 +6,6 @@
 # Build-ID: bb90850f-1d2e-4d12-852e-842527475b37
 #
 # COMMUNITY EDITION - AI-Powered Security Scanner
-# For active verification and Phase 2 testing, upgrade to Professional Edition
 #
 # This community edition provides:
 # - AI-powered passive security analysis
@@ -42,6 +41,7 @@ from javax.swing import JPanel, JScrollPane, JTextArea, JTable, JLabel, JSplitPa
 from javax.swing.table import DefaultTableModel, DefaultTableCellRenderer
 from java.lang import Runnable
 from java.util import ArrayList
+from java.util.concurrent import Executors, TimeUnit
 import json
 import threading
 import urllib2
@@ -85,6 +85,17 @@ class ConsolePrintWriter:
     def flush(self):
         self.original.flush()
 
+class AnalyzeTask(Runnable):
+    """Runnable wrapper for submitting analysis tasks to thread pool."""
+    def __init__(self, extender, messageInfo, url_str, task_id):
+        self.extender = extender
+        self.messageInfo = messageInfo
+        self.url_str = url_str
+        self.task_id = task_id
+    
+    def run(self):
+        self.extender.analyze(self.messageInfo, self.url_str, self.task_id)
+
 class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMenuFactory):
     def registerExtenderCallbacks(self, callbacks):
         self.callbacks = callbacks
@@ -103,6 +114,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.EDITION = "Community"
         self.RELEASE_DATE = "2026-03-18"
         self.BUILD_ID = "bb90850f-1d2e-4d12-852e-842527475b37"
+        self.CONFIG_VERSION = 2  # Increment this when config format changes
 
         callbacks.setExtensionName("SILENTCHAIN AI - %s Edition v%s" % (self.EDITION, self.VERSION))
         callbacks.registerHttpListener(self)
@@ -139,6 +151,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self._ui_dirty = True           # Flag: data changed since last refresh
         self._refresh_pending = False   # Guard: refresh already queued on EDT
         self._last_console_len = 0      # Track console length for incremental append
+        
+        # Cache persistence control (async write-behind)
+        self._cache_dirty = False       # Flag: cache changed since last save
 
         # Console tracking for UI panel
         self.console_messages = []
@@ -163,7 +178,15 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         
         self.processed_urls = set()
         self.url_lock = threading.Lock()
-        self.semaphore = threading.Semaphore(1)
+        
+        # Per-host semaphores + global pool cap (fix semaphore bottleneck)
+        self.host_semaphores = {}
+        self.host_semaphore_lock = threading.Lock()
+        self.global_semaphore = threading.Semaphore(5)  # max 5 concurrent AI calls
+        
+        # Thread pool for bounded analysis tasks (instead of unbounded thread spawning)
+        self.thread_pool = Executors.newFixedThreadPool(5)
+        
         self.last_request_time = 0
         self.min_delay = 4.0
 
@@ -207,8 +230,6 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.stdout.println("[+] Deduplication: ENABLED")
         self.stdout.println("")
         self.stdout.println("[*] COMMUNITY EDITION - Passive scanning only")
-        self.stdout.println("[*] For active verification, upgrade to Professional Edition")
-        self.stdout.println("[*] Visit: https://silentchain.ai for more information")
 
         # Test AI connection in background thread (non-blocking startup)
         def _startup_connection_test():
@@ -353,12 +374,6 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         
         self.pauseAllButton = JButton("Pause All Tasks", actionPerformed=self.pauseAllTasks)
         
-        # Upgrade to Professional button
-        self.upgradeButton = JButton("Upgrade to Professional", actionPerformed=self.openUpgradePage)
-        self.upgradeButton.setBackground(Color(0xD5, 0x59, 0x35))
-        self.upgradeButton.setForeground(Color.WHITE)
-        self.upgradeButton.setOpaque(True)
-        
         primaryControls.add(self.scanningButton)
         primaryControls.add(self.exportButton)
         primaryControls.add(self.settingsButton)
@@ -366,7 +381,6 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
 
         secondaryControls.add(self.cancelAllButton)
         secondaryControls.add(self.pauseAllButton)
-        secondaryControls.add(self.upgradeButton)
 
         controlPanel.add(primaryControls)
         controlPanel.add(secondaryControls)
@@ -612,15 +626,11 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                     with self.extender.vuln_cache_lock:
                         self.extender.cacheStatusLabel.setText(str(len(self.extender.vuln_cache)))
 
-                    # Task table
-                    self.extender.taskTableModel.setRowCount(0)
-                    for row in tasks_snapshot:
-                        self.extender.taskTableModel.addRow(row)
+                    # Task table — differential update (only change modified cells)
+                    self.extender.update_table_diff(self.extender.taskTableModel, tasks_snapshot)
 
-                    # Findings table
-                    self.extender.findingsTableModel.setRowCount(0)
-                    for row in findings_snapshot:
-                        self.extender.findingsTableModel.addRow(row)
+                    # Findings table — differential update (only change modified cells)
+                    self.extender.update_table_diff(self.extender.findingsTableModel, findings_snapshot)
 
                     self.extender.findingsStatsLabel.setText(
                         "Total: %d | High: %d | Medium: %d | Low: %d | Info: %d" %
@@ -655,6 +665,10 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
 
         self._ui_dirty = False
         self._refresh_pending = True
+        
+        # Async flush cache if dirty (non-blocking write-behind)
+        self._async_save_cache()
+        
         SwingUtilities.invokeLater(RefreshRunnable(self))
 
     def start_auto_refresh_timer(self):
@@ -866,6 +880,12 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 with open(self.config_file, 'r') as f:
                     config = json.load(f)
                 
+                # Check config version and migrate if needed
+                config_version = config.get("config_version", 1)
+                if config_version < self.CONFIG_VERSION:
+                    self.stdout.println("[CONFIG] Migrating config from v%d to v%d" % (config_version, self.CONFIG_VERSION))
+                    config = self._migrate_config(config, config_version)
+                
                 # Load settings
                 self.AI_PROVIDER = config.get("ai_provider", self.AI_PROVIDER)
                 self.API_URL = config.get("api_url", self.API_URL)
@@ -887,6 +907,13 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         except Exception as e:
             self.stderr.println("[!] Failed to load config: %s" % e)
             self.stderr.println("[!] Using default settings")
+
+    def _migrate_config(self, old_config, from_version):
+        """Migrate config from old format to new."""
+        # v1 -> v2: No breaking changes in this release, just add version number
+        old_config["config_version"] = self.CONFIG_VERSION
+        self.save_config()  # Persist migrated version
+        return old_config
 
     def load_vuln_cache(self):
         """Load persistent vulnerability cache from disk."""
@@ -928,6 +955,22 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             self.stderr.println("[!] Failed to save vulnerability cache: %s" % e)
             return False
 
+    def _async_save_cache(self):
+        """Non-blocking background write if cache is dirty. Safety: check before spawning thread."""
+        if not self._cache_dirty:
+            return
+        
+        def background_save():
+            try:
+                self.save_vuln_cache()
+            except:
+                pass
+        
+        t = threading.Thread(target=background_save)
+        t.setDaemon(True)
+        t.start()
+        self._cache_dirty = False
+
     def _get_request_signature(self, data):
         """Build a stable request signature for persistent cache matching."""
         base_url = str(data.get("url", "")).split('?', 1)[0]
@@ -941,6 +984,16 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         for header in data.get("response_headers", [])[:10]:
             res_header_names.append(str(header).split(':', 1)[0].strip().lower())
 
+        # Check auth presence (authorization, cookie, api-key headers)
+        auth_present = any(
+            h.lower().startswith(('authorization:', 'cookie:', 'x-api-key:'))
+            for h in data.get("request_headers", [])
+        )
+        auth_length = sum(
+            len(h) for h in data.get("request_headers", [])
+            if h.lower().startswith(('authorization:', 'cookie:', 'x-api-key:'))
+        )
+
         signature_obj = {
             "provider": self.AI_PROVIDER,
             "model": self.MODEL,
@@ -950,10 +1003,13 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             "mime_type": data.get("mime_type", ""),
             "param_names": param_names,
             "request_headers": sorted(req_header_names),
-            "response_headers": sorted(res_header_names)
+            "response_headers": sorted(res_header_names),
+            "auth_present": auth_present,
+            "auth_length": auth_length
         }
         encoded = json.dumps(signature_obj, sort_keys=True)
-        return hashlib.md5(encoded.encode('utf-8')).hexdigest()
+        # Use SHA-256 instead of MD5 for better cryptographic security
+        return hashlib.sha256(encoded.encode('utf-8')).hexdigest()[:32]
 
     def _get_cached_findings_for_signature(self, signature):
         with self.vuln_cache_lock:
@@ -968,9 +1024,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             findings = entry.get("findings", [])
             if not isinstance(findings, list):
                 findings = []
-
-        # Save usage metadata opportunistically
-        self.save_vuln_cache()
+        
+        # Set dirty flag for async write-behind (don't block on disk I/O)
+        self._cache_dirty = True
         return findings
 
     def _store_cached_findings(self, signature, url, findings):
@@ -1010,6 +1066,7 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         """Save configuration to disk"""
         try:
             config = {
+                "config_version": self.CONFIG_VERSION,
                 "ai_provider": self.AI_PROVIDER,
                 "api_url": self.API_URL,
                 "api_key": self.API_KEY,
@@ -1208,16 +1265,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         except Exception as e:
             self.stderr.println("[!] Export failed: %s" % e)
 
-    def openUpgradePage(self, event):
+    def openUpdatesPage(self, event):
         """Open updates page in browser"""
         self.stdout.println("\n[UPDATE] Checking for updates...")
-        self.stdout.println("[UPDATE] Visit https://silentchain.ai/?referral=silentchain_community")
-
-        try:
-            import webbrowser
-            webbrowser.open("https://silentchain.ai/?referral=silentchain_community")
-        except:
-            self.stdout.println("[UPDATE] Please visit: https://silentchain.ai/?referral=silentchain_community")
     
     def openSettings(self, event):
         """Open settings dialog with AI provider and advanced configuration"""
@@ -1511,22 +1561,14 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         gbc.gridx = 0
         gbc.gridy = row
         gbc.gridwidth = 2
-        upgradeNotice = JTextArea(
+        editionNotice = JTextArea(
             "COMMUNITY EDITION - Passive Analysis Only\n\n"
-            "This edition provides AI-powered passive security analysis.\n\n"
-            "Upgrade to Professional Edition for:\n"
-            "- Phase 2 active verification\n"
-            "- Advanced payload libraries (OWASP, custom)\n"
-            "- WAF detection and evasion\n"
-            "- Out-of-band (OOB) testing\n"
-            "- Burp Intruder integration\n"
-            "- Priority support\n\n"
-            "Visit https://silentchain.ai for more information"
+            "This edition provides AI-powered passive security analysis."
         )
-        upgradeNotice.setEditable(False)
-        upgradeNotice.setBackground(advancedPanel.getBackground())
-        upgradeNotice.setFont(Font("Dialog", Font.PLAIN, 11))
-        advancedPanel.add(upgradeNotice, gbc)
+        editionNotice.setEditable(False)
+        editionNotice.setBackground(advancedPanel.getBackground())
+        editionNotice.setFont(Font("Dialog", Font.PLAIN, 11))
+        advancedPanel.add(editionNotice, gbc)
         
         tabbedPane.addTab("Advanced", advancedPanel)
         
@@ -1984,9 +2026,6 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
         self.stdout.println("")
         self.stdout.println("     Intelligent | Silent | Adaptive | Comprehensive")
         self.stdout.println("")
-        self.stdout.println("     Upgrade to Professional for Active Testing")
-        self.stdout.println("     https://silentchain.ai")
-        self.stdout.println("")
         self.stdout.println("=" * 65)
         self.stdout.println("")
 
@@ -2096,66 +2135,176 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             url_str = "Unknown"
 
         task_id = self.addTask("HTTP", url_str, "Queued", messageInfo)
-        t = threading.Thread(target=self.analyze, args=(messageInfo, url_str, task_id))
-        t.setDaemon(True)
-        t.start()
+        # Submit analysis task to thread pool instead of spawning unlimited threads
+        analysis_task = AnalyzeTask(self, messageInfo, url_str, task_id)
+        self.thread_pool.submit(analysis_task)
 
     def analyze(self, messageInfo, url_str=None, task_id=None):
-        with self.semaphore:
-            try:
-                time_since_last = time.time() - self.last_request_time
-                if time_since_last < self.min_delay:
-                    wait_time = self.min_delay - time_since_last
+        # Extract host from URL for per-host semaphore
+        host = self._extract_host_from_url(url_str or "unknown")
+        host_sem = self.get_host_semaphore(host)
+        
+        # Acquire global pool cap first, then per-host limit
+        self.global_semaphore.acquire()
+        try:
+            with host_sem:
+                try:
+                    time_since_last = time.time() - self.last_request_time
+                    if time_since_last < self.min_delay:
+                        wait_time = self.min_delay - time_since_last
+                        if task_id is not None:
+                            self.updateTask(task_id, "Waiting (Rate Limit)")
+                        time.sleep(wait_time)
+                    
+                    self.last_request_time = time.time()
                     if task_id is not None:
-                        self.updateTask(task_id, "Waiting (Rate Limit)")
-                    time.sleep(wait_time)
-                
-                self.last_request_time = time.time()
-                if task_id is not None:
-                    self.updateTask(task_id, "Analyzing")
-                
-                self._perform_analysis(messageInfo, "HTTP", url_str, task_id)
-                
-                if task_id is not None:
-                    self.updateTask(task_id, "Completed")
-            except Exception as e:
-                self.stderr.println("[!] HTTP error: %s" % e)
-                if task_id is not None:
-                    self.updateTask(task_id, "Error: %s" % str(e)[:30])
-                self.updateStats("errors")
-            finally:
-                self.refreshUI()
+                        self.updateTask(task_id, "Analyzing")
+                    
+                    self._perform_analysis(messageInfo, "HTTP", url_str, task_id)
+                    
+                    if task_id is not None:
+                        self.updateTask(task_id, "Completed")
+                except Exception as e:
+                    self.stderr.println("[!] HTTP error: %s" % e)
+                    if task_id is not None:
+                        self.updateTask(task_id, "Error: %s" % str(e)[:30])
+                    self.updateStats("errors")
+                finally:
+                    self.refreshUI()
+        finally:
+            self.global_semaphore.release()
 
     def analyze_forced(self, messageInfo, url_str=None, task_id=None):
         """
         Forced analysis that bypasses deduplication.
         Used for context menu re-analysis of already-analyzed requests.
         """
-        with self.semaphore:
-            try:
-                time_since_last = time.time() - self.last_request_time
-                if time_since_last < self.min_delay:
-                    wait_time = self.min_delay - time_since_last
+        # Extract host from URL for per-host semaphore
+        host = self._extract_host_from_url(url_str or "unknown")
+        host_sem = self.get_host_semaphore(host)
+        
+        # Acquire global pool cap first, then per-host limit
+        self.global_semaphore.acquire()
+        try:
+            with host_sem:
+                try:
+                    time_since_last = time.time() - self.last_request_time
+                    if time_since_last < self.min_delay:
+                        wait_time = self.min_delay - time_since_last
+                        if task_id is not None:
+                            self.updateTask(task_id, "Waiting (Rate Limit)")
+                        time.sleep(wait_time)
+                    
+                    self.last_request_time = time.time()
                     if task_id is not None:
-                        self.updateTask(task_id, "Waiting (Rate Limit)")
-                    time.sleep(wait_time)
+                        self.updateTask(task_id, "Analyzing (Forced)")
+                    
+                    # Call _perform_analysis with bypass_dedup=True
+                    self._perform_analysis(messageInfo, "CONTEXT", url_str, task_id, bypass_dedup=True)
+                    
+                    if task_id is not None:
+                        self.updateTask(task_id, "Completed")
+                except Exception as e:
+                    self.stderr.println("[!] Context menu error: %s" % e)
+                    if task_id is not None:
+                        self.updateTask(task_id, "Error: %s" % str(e)[:30])
+                    self.updateStats("errors")
+                finally:
+                    self.refreshUI()
+        finally:
+            self.global_semaphore.release()
+
+    def get_host_semaphore(self, host):
+        """Get or create per-host semaphore (max 2 concurrent per host)."""
+        with self.host_semaphore_lock:
+            if host not in self.host_semaphores:
+                self.host_semaphores[host] = threading.Semaphore(2)
+            return self.host_semaphores[host]
+    
+    def _extract_host_from_url(self, url_str):
+        """Extract hostname from URL string."""
+        try:
+            import re
+            match = re.match(r'https?://([^:/]+)', str(url_str))
+            return match.group(1) if match else "unknown"
+        except:
+            return "unknown"
+
+    def update_table_diff(self, model, new_rows):
+        """Differential table update — only modify changed cells, don't wipe and rebuild."""
+        current_count = model.getRowCount()
+        
+        for i, row in enumerate(new_rows):
+            if i < current_count:
+                # Update existing row only if changed
+                for j, val in enumerate(row):
+                    try:
+                        current_val = str(model.getValueAt(i, j))
+                        if current_val != str(val):
+                            model.setValueAt(val, i, j)
+                    except:
+                        model.setValueAt(val, i, j)
+            else:
+                # Add new row
+                model.addRow(row)
+        
+        # Trim excess rows
+        while model.getRowCount() > len(new_rows):
+            model.removeRow(model.getRowCount() - 1)
+
+    def smart_truncate_body(self, body, max_len=5000):
+        """Smart truncation: keep crucial regions (start + end) with ellipsis indicator."""
+        if len(body) <= max_len:
+            return body
+        
+        # Keep first 3000 (usually contains forms, inputs, error messages)
+        head_len = 3000
+        # Keep last 1000 (usually closing tags, JavaScript, tokens, endpoints)
+        tail_len = 1000
+        truncated_len = len(body) - head_len - tail_len
+        
+        if truncated_len > 0:
+            return body[:head_len] + "\n...[truncated %d chars]...\n" % truncated_len + body[-tail_len:]
+        else:
+            return body[:max_len]
+
+    def extract_idor_signals(self, params_sample, url):
+        """Detect patterns that may indicate IDOR vulnerability."""
+        signals = []
+        try:
+            import re
+            
+            # Numeric IDs in URL path
+            path_ids = re.findall(r'/(\d{1,10})(?:/|$|\?)', str(url))
+            if path_ids:
+                signals.append({"type": "path_numeric_id", "values": path_ids[:3]})
+            
+            # Check for UUID patterns in URL
+            if re.search(r'[0-9a-f-]{36}', str(url), re.I):
+                signals.append({"type": "path_uuid"})
+            
+            # Numeric params (likely IDs)
+            numeric_params = []
+            uuid_params = []
+            
+            for p in params_sample:
+                val = p.get("value", "")
+                name = p.get("name", "")
                 
-                self.last_request_time = time.time()
-                if task_id is not None:
-                    self.updateTask(task_id, "Analyzing (Forced)")
-                
-                # Call _perform_analysis with bypass_dedup=True
-                self._perform_analysis(messageInfo, "CONTEXT", url_str, task_id, bypass_dedup=True)
-                
-                if task_id is not None:
-                    self.updateTask(task_id, "Completed")
-            except Exception as e:
-                self.stderr.println("[!] Context menu error: %s" % e)
-                if task_id is not None:
-                    self.updateTask(task_id, "Error: %s" % str(e)[:30])
-                self.updateStats("errors")
-            finally:
-                self.refreshUI()
+                if re.match(r'^\d+$', val) and len(val) <= 10:
+                    numeric_params.append({"name": name, "value": val})
+                elif re.match(r'^[0-9a-f-]{36}$', val, re.I):
+                    uuid_params.append({"name": name, "value": val})
+            
+            if numeric_params:
+                signals.append({"type": "numeric_param", "params": numeric_params[:3]})
+            if uuid_params:
+                signals.append({"type": "uuid_param", "params": uuid_params[:3]})
+        
+        except:
+            pass
+        
+        return signals
 
     def _get_url_hash(self, url, params):
         param_names = sorted([p.getName() for p in params])
@@ -2165,6 +2314,95 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
     def _get_finding_hash(self, url, title, cwe, param_name=""):
         key = "%s|%s|%s|%s" % (str(url).split('?')[0], title.lower().strip(), cwe, param_name)
         return hashlib.md5(key.encode('utf-8')).hexdigest()
+
+    def _parse_ai_response(self, ai_text):
+        """Parse AI response into findings list. Handles repair of malformed JSON."""
+        ai_text = ai_text.strip()
+        
+        # Strip markdown fences
+        if ai_text.startswith("```"):
+            import re
+            ai_text = re.sub(r'^```(?:json)?\n?|```$', '', ai_text, flags=re.MULTILINE).strip()
+        
+        # Try to extract JSON array or object
+        start = ai_text.find('[')
+        end = ai_text.rfind(']')
+        if start != -1 and end != -1:
+            ai_text = ai_text[start:end + 1]
+        elif ai_text.find('{') != -1:
+            obj_start = ai_text.find('{')
+            obj_end = ai_text.rfind('}')
+            if obj_start != -1 and obj_end != -1:
+                ai_text = '[' + ai_text[obj_start:obj_end + 1] + ']'
+        
+        try:
+            findings = json.loads(ai_text)
+            return findings if isinstance(findings, list) else [findings]
+        except ValueError:
+            # JSON parse failed, attempt repair
+            return self._repair_json(ai_text)
+
+    def _repair_json(self, ai_text):
+        """Attempt to repair malformed JSON and extract findings."""
+        try:
+            import re
+            original_text = ai_text
+            
+            # Strategy 1: Fix unterminated strings
+            lines = ai_text.split('\n')
+            fixed_lines = []
+            for line in lines:
+                if not line.strip():
+                    fixed_lines.append(line)
+                    continue
+                
+                quote_positions = []
+                i = 0
+                while i < len(line):
+                    if line[i] == '"' and (i == 0 or line[i-1] != '\\'):
+                        quote_positions.append(i)
+                    i += 1
+                
+                if len(quote_positions) % 2 == 1:
+                    line = line.rstrip()
+                    if line.endswith(',') or line.endswith('}') or line.endswith(']'):
+                        line = line[:-1] + '"' + line[-1]
+                    elif not line.endswith('"'):
+                        line = line + '"'
+                
+                fixed_lines.append(line)
+            
+            ai_text = '\n'.join(fixed_lines)
+            ai_text = re.sub(r',(\s*[}\]])', r'\1', ai_text)
+            ai_text = ai_text.strip()
+            
+            if not ai_text.startswith('['):
+                if ai_text.startswith('{'):
+                    ai_text = '[' + ai_text
+                else:
+                    start_obj = ai_text.find('{')
+                    if start_obj != -1:
+                        ai_text = '[' + ai_text[start_obj:]
+            
+            if not ai_text.endswith(']'):
+                if ai_text.endswith('}'):
+                    ai_text = ai_text + ']'
+                else:
+                    end_obj = ai_text.rfind('}')
+                    if end_obj != -1:
+                        ai_text = ai_text[:end_obj+1] + ']'
+            
+            final_bracket = ai_text.rfind(']')
+            if final_bracket != -1 and final_bracket < len(ai_text) - 1:
+                ai_text = ai_text[:final_bracket + 1]
+            
+            findings = json.loads(ai_text)
+            self.stdout.println("[+] JSON successfully repaired")
+            return findings if isinstance(findings, list) else [findings]
+        
+        except Exception:
+            self.stderr.println("[!] JSON repair failed")
+            return []
 
     def _perform_analysis(self, messageInfo, source, url_str=None, task_id=None, bypass_dedup=False):
         try:
@@ -2208,8 +2446,9 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             
             response_bytes = messageInfo.getResponse()
             try:
-                # Use Burp's helper for safe string conversion
-                res_body = self.helpers.bytesToString(response_bytes[res.getBodyOffset():])[:3000]
+                # Use Burp's helper for safe string conversion + smart truncation
+                raw_body = self.helpers.bytesToString(response_bytes[res.getBodyOffset():])
+                res_body = self.smart_truncate_body(raw_body, max_len=5000)
             except Exception as e:
                 if self.VERBOSE:
                     self.stdout.println("[DEBUG] Response body decode error: %s" % e)
@@ -2220,12 +2459,15 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
             params_sample = [{"name": p.getName(), "value": p.getValue()[:150], 
                             "type": str(p.getType())} for p in params[:5]]
 
+            # Extract IDOR signals (numeric IDs, UUIDs, etc)
+            idor_signals = self.extract_idor_signals(params_sample, url)
+
             data = {
                 "url": url, "method": req.getMethod(), "status": res.getStatusCode(),
                 "mime_type": res.getStatedMimeType(), "params_count": len(params),
                 "params_sample": params_sample, "request_headers": req_headers,
                 "request_body": req_body, "response_headers": res_headers,
-                "response_body": res_body
+                "response_body": res_body, "idor_signals": idor_signals
             }
 
             request_signature = self._get_request_signature(data)
@@ -2275,118 +2517,15 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 if self.VERBOSE:
                     self.stdout.println("[%s] [AI RESPONSE] received=%d chars" % (source, len(ai_text)))
 
-                if ai_text.startswith("```"):
-                    import re
-                    ai_text = re.sub(r'^```(?:json)?\n?|```$', '', ai_text, flags=re.MULTILINE).strip()
-
-                start = ai_text.find('[')
-                end = ai_text.rfind(']')
-                if start != -1 and end != -1:
-                    ai_text = ai_text[start:end + 1]
-                elif ai_text.find('{') != -1:
-                    obj_start = ai_text.find('{')
-                    obj_end = ai_text.rfind('}')
-                    if obj_start != -1 and obj_end != -1:
-                        ai_text = '[' + ai_text[obj_start:obj_end + 1] + ']'
-
-                try:
-                    findings = json.loads(ai_text)
-                except ValueError as e:
-                    self.stderr.println("[!] JSON parse error: %s" % e)
-                    self.stderr.println("[!] Attempting to repair malformed JSON...")
-
-                    # Try multiple repair strategies
-                    repaired = False
-
-                    try:
-                        import re
-                        original_text = ai_text
-
-                        # Strategy 1: Fix unterminated strings by adding closing quotes
-                        lines = ai_text.split('\n')
-                        fixed_lines = []
-                        for line in lines:
-                            if not line.strip():
-                                fixed_lines.append(line)
-                                continue
-
-                            quote_positions = []
-                            i = 0
-                            while i < len(line):
-                                if line[i] == '"' and (i == 0 or line[i-1] != '\\'):
-                                    quote_positions.append(i)
-                                i += 1
-
-                            if len(quote_positions) % 2 == 1:
-                                line = line.rstrip()
-                                if line.endswith(',') or line.endswith('}') or line.endswith(']'):
-                                    line = line[:-1] + '"' + line[-1]
-                                elif not line.endswith('"'):
-                                    line = line + '"'
-
-                            fixed_lines.append(line)
-
-                        ai_text = '\n'.join(fixed_lines)
-                        ai_text = re.sub(r',(\s*[}\]])', r'\1', ai_text)
-
-                        ai_text = ai_text.strip()
-                        if not ai_text.startswith('['):
-                            if ai_text.startswith('{'):
-                                ai_text = '[' + ai_text
-                            else:
-                                start_obj = ai_text.find('{')
-                                if start_obj != -1:
-                                    ai_text = '[' + ai_text[start_obj:]
-
-                        if not ai_text.endswith(']'):
-                            if ai_text.endswith('}'):
-                                ai_text = ai_text + ']'
-                            else:
-                                end_obj = ai_text.rfind('}')
-                                if end_obj != -1:
-                                    ai_text = ai_text[:end_obj+1] + ']'
-
-                        final_bracket = ai_text.rfind(']')
-                        if final_bracket != -1 and final_bracket < len(ai_text) - 1:
-                            ai_text = ai_text[:final_bracket + 1]
-
-                        findings = json.loads(ai_text)
-                        repaired = True
-                        self.stdout.println("[+] JSON successfully repaired")
-
-                    except Exception as repair_error:
-                        self.stderr.println("[!] JSON repair failed: %s" % repair_error)
-
-                    if not repaired:
-                        self.stderr.println("[!] Attempting last-resort JSON extraction...")
-                        try:
-                            import re
-                            objects = re.findall(r'\{[^}]+\}', original_text, re.DOTALL)
-                            if objects:
-                                findings = []
-                                for obj_str in objects[:5]:
-                                    try:
-                                        obj = json.loads(obj_str)
-                                        findings.append(obj)
-                                    except:
-                                        pass
-
-                                if findings:
-                                    self.stdout.println("[+] Extracted %d valid objects from malformed JSON" % len(findings))
-                                    repaired = True
-                        except:
-                            pass
-
-                    if not repaired:
-                        self.stderr.println("[!] All repair attempts failed - skipping this analysis")
-                        self.stderr.println("[!] AI response was too malformed to parse")
-                        if self.VERBOSE:
-                            self.stderr.println("[DEBUG] Failed response (first 1000 chars):")
-                            self.stderr.println(original_text[:1000])
-                        if task_id is not None:
-                            self.updateTask(task_id, "Error (JSON Parse Failed)")
-                        self.updateStats("errors")
-                        return
+                # Parse AI response (handles markdown, JSON repair, etc)
+                findings = self._parse_ai_response(ai_text)
+                
+                if not findings:
+                    self.stderr.println("[!] Failed to extract findings from AI response")
+                    if task_id is not None:
+                        self.updateTask(task_id, "Error (JSON Parse Failed)")
+                    self.updateStats("errors")
+                    return
 
                 # Store fresh AI result in persistent cache for future reuse
                 self._store_cached_findings(request_signature, url, findings)
@@ -2450,6 +2589,11 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 detail_parts.append("<b>Description:</b><br>%s<br>" % detail)
                 detail_parts.append("<br><b>AI Confidence:</b> %d%%<br>" % ai_conf)
                 
+                # Add evidence field if present
+                if item.get("evidence"):
+                    evidence_text = str(item.get("evidence", ""))[:500]
+                    detail_parts.append("<br><b>Evidence:</b><br><code>%s</code><br>" % evidence_text)
+                
                 if params_sample:
                     detail_parts.append("<br><b>Affected Parameter(s):</b><br>")
                     for param in params_sample[:3]:
@@ -2470,11 +2614,8 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
                 if item.get("remediation"):
                     detail_parts.append("<br><b>Remediation:</b><br>%s<br>" % item.get("remediation"))
                 
-                detail_parts.append("<br><br><b>Community Edition Note:</b><br>")
-                detail_parts.append("<i>This finding was detected through passive AI analysis. ")
-                detail_parts.append("For active verification with exploit payloads, ")
-                detail_parts.append("upgrade to SILENTCHAIN Professional Edition.</i><br>")
-                detail_parts.append("<a href='https://silentchain.ai'>Learn More</a>")
+                detail_parts.append("<br><br><b>Note:</b><br>")
+                detail_parts.append("<i>This finding was detected through passive AI analysis.</i>")
                 
                 full_detail = "".join(detail_parts)
 
@@ -2497,12 +2638,24 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
     def build_prompt(self, data):
         return (
             "Security expert. Output ONLY JSON array. NO markdown.\n"
-            "Analyze for OWASP Top 10, CWE.\n"
-            "Categories: Injection, XSS, Auth, Access Control, Misconfiguration.\n"
-            "Format: {\"title\":\"name\",\"severity\":\"High|Medium|Low|Information\","
-            "\"confidence\":50-100,\"detail\":\"desc\",\"cwe\":\"CWE-X\","
-            "\"owasp\":\"A0X:2021\",\"remediation\":\"fix\"}\n"
-            "Data:\n%s\n"
+            "Analyze for ALL of the following:\n"
+            "1. OWASP Top 10 (2021) - SQL Injection, XSS, Authentication flaws, etc.\n"
+            "2. IDOR/Broken Object Level Auth - look for numeric/sequential IDs in params\n"
+            "3. Mass Assignment - extra params in POST bodies not validated\n"
+            "4. SSRF - URL params, redirect params, webhook endpoints\n"
+            "5. JWT weaknesses - alg:none, weak secrets in Authorization header\n"
+            "6. GraphQL exploitation - introspection, batching, if body contains 'query' or '__schema'\n"
+            "7. OAuth misconfigs - redirect_uri, state param missing, token leakage\n"
+            "8. HTTP Request Smuggling hints - Transfer-Encoding + Content-Length conflicts\n"
+            "9. Cache Poisoning - X-Forwarded-Host, X-Original-URL, X-Forwarded-Proto headers\n"
+            "10. Business Logic flaws - price/quantity params, role/permission params, discount logic\n"
+            "11. Information Disclosure - stack traces, internal IPs, API keys, secrets in responses\n"
+            "12. Prototype Pollution - __proto__, constructor in JSON params, Object.assign usage\n"
+            "Flag confidence=0 if no evidence. Only report confidence>=50.\n"
+            "Format: [{\"title\":str,\"severity\":\"High|Medium|Low|Information\","
+            "\"confidence\":0-100,\"detail\":str,\"cwe\":str,"
+            "\"owasp\":str,\"remediation\":str,\"param\":str,\"evidence\":str}]\n"
+            "HTTP Data:\n%s\n"
         ) % json.dumps(data, indent=2)
 
     def ask_ai(self, prompt):
