@@ -561,9 +561,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 - Comprehensive README with quick start
-- Detailed installation guide (INSTALLATION.md)
-- 5-minute quick start guide (QUICKSTART.md)
-- Contributing guidelines (CONTRIBUTING.md)
+- Detailed installation guide (docs/guides/INSTALLATION.md)
+- 5-minute quick start guide (docs/guides/QUICKSTART.md)
+- Contributing guidelines (docs/project/CONTRIBUTING.md)
 - Settings verification guide (SETTINGS_VERIFICATION.md)
 
 ### Known Limitations
@@ -606,9 +606,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ```
 silentchain_ai_community.py    # Main extension file (1549 lines)
 README.md                       # Project documentation
-INSTALLATION.md                 # Setup guide
-QUICKSTART.md                   # 5-minute guide
-CONTRIBUTING.md                 # Development guide
+docs/guides/INSTALLATION.md     # Setup guide
+docs/guides/QUICKSTART.md       # 5-minute guide
+docs/project/CONTRIBUTING.md    # Development guide
 LICENSE                         # MIT License
 CHANGELOG.md                    # This file
 ```
@@ -704,7 +704,7 @@ Visit https://silentchain.ai for upgrade options.
 
 ## Contributing
 
-Found a bug? Have a feature request? See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Found a bug? Have a feature request? See [docs/project/CONTRIBUTING.md](docs/project/CONTRIBUTING.md) for guidelines.
 
 ---
 
@@ -717,8 +717,8 @@ MIT License - See [LICENSE](LICENSE) file for details.
 ## Support
 
 - **Community Support**: GitHub Issues
-- **Documentation**: https://github.com/silentchainai/SILENTCHAIN
-- **Professional Support**: support@silentchain.ai (Professional Edition only)
+- **Documentation**: See repository docs in this fork
+- **Support**: Use your fork's issue tracker
 
 ---
 
