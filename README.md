@@ -6,7 +6,7 @@
 
 ![SILENTCHAIN Logo](https://img.shields.io/badge/SILENTCHAIN-AI%20Security-blue?style=for-the-badge)
 [![Burp Suite](https://img.shields.io/badge/Burp_Suite-Extension-orange?style=for-the-badge&logo=burpsuite)](https://portswigger.net/burp)
-[![Python](https://img.shields.io/badge/Python-2.7-yellow?style=for-the-badge&logo=python)](https://www.python.org/)
+[![Java](https://img.shields.io/badge/Java-21-yellow?style=for-the-badge&logo=openjdk)](https://www.java.com/)
 
 ### 🔗 ⛓️ 🔒
 
@@ -36,7 +36,7 @@
 
 Traditional security scanners rely on predefined signatures and patterns. **SILENTCHAIN AI™** goes beyond with:
 
-- **🧠 AI-Powered Analysis**: Leverages state-of-the-art language models (Ollama, OpenAI, Claude, Claude Code, Gemini) for intelligent vulnerability detection
+- **🧠 AI-Powered Analysis**: Leverages state-of-the-art language models (Burp AI, Ollama, OpenAI, Claude, Gemini, Azure) for intelligent vulnerability detection
 - **🎯 Context-Aware Detection**: Understands application logic and business context, not just pattern matching
 - **⚡ Real-Time Scanning**: Analyzes traffic as it flows through Burp's proxy
 - **📊 Professional Reporting**: Generates detailed findings with CWE, OWASP mappings, and remediation guidance
@@ -62,11 +62,12 @@ Traditional security scanners rely on predefined signatures and patterns. **SILE
 - Integrated console logging
 
 #### 🤖 **Multi-AI Support**
-- **Ollama** (Local, free, privacy-focused)
-- **OpenAI** (GPT-4, GPT-3.5)
+- **Burp AI** (default; in-process, zero-config; Burp Suite Professional)
+- **Ollama** (local, free, privacy-focused)
+- **OpenAI** (GPT-4 / GPT-4o)
 - **Claude** (Anthropic)
-- **Claude Code** (Anthropic CLI)
 - **Gemini** (Google)
+- **Azure OpenAI / Foundry**
 
 #### 📋 **Smart Reporting**
 - Detailed vulnerability descriptions
@@ -110,55 +111,40 @@ SILENTCHAIN AI™ detects a wide range of security issues including:
 
 ### Prerequisites
 
-- **Burp Suite** (Community or Professional)
-- **Java 8+** (required by Burp)
-- **Jython** (for Python extensions, typically bundled with Burp)
-- **AI Provider** (one of the following):
-   - [Ollama](https://ollama.ai) (Free, local)
+- **Burp Suite Professional** 2025.2+ (recommended — required for the default **Burp AI** provider) or **Burp Suite Community** (works with external providers such as Ollama)
+- **Java 21 runtime** (bundled with current Burp releases)
+- **An AI provider** (one of the following):
+   - **Burp AI** (default; zero-config; requires Burp Suite Professional + an active Burp AI subscription)
+   - [Ollama](https://ollama.ai) (free, local, privacy-focused)
    - OpenAI API key
-   - Claude API key
-   - [Claude Code](https://claude.ai/code) CLI (Anthropic)
-   - Gemini API key
+   - Claude (Anthropic) API key
+   - Gemini (Google) API key
+   - Azure OpenAI / Foundry
 
 ### Installation
 
-#### Method 1: From BApp Store (Recommended)
+1. **Download the extension**
+   - Grab the latest `silentchain-community-edition-X.Y.Z.jar` from the [Releases](https://github.com/silentchainai/SILENTCHAIN/releases) page.
 
-1. Open Burp Suite
-2. Go to **Extender** → **BApp Store**
-3. Search for "SILENTCHAIN AI"
-4. Click **Install**
+2. **Load it in Burp Suite**
+   - Go to **Extensions** → **Installed** → **Add**
+   - Set Extension type: **Java**
+   - Select the downloaded `.jar` and click **Next**
 
-#### Method 2: Manual Installation
+3. **Configure your AI provider**
+   - Open the **SILENTCHAIN Community** tab → **⚙ Settings**
+   - Pick a provider — **Burp AI** works with no configuration. For an external provider, set the API URL / key / model, click **Test Connection**, then **Save**.
 
-1. **Download the Extension**
-   - Download `silentchain_ai_community.py` from this repository or the Burp Suite BApp Store
-
-2. **Load in Burp Suite**
-   - Open Burp Suite
-   - Go to **Extender** → **Extensions** → **Add**
-   - Set Extension type: **Python** (or Jython)
-   - Select the downloaded `silentchain_ai_community.py` file
-   - Click **Next**
-
-3. **Configure AI Provider**
-   - Go to **SILENTCHAIN** tab in Burp
-   - Click **⚙ Settings**
-   - Configure your AI provider (see [Configuration](#-configuration))
-   - Click **Test Connection**
-   - Click **Save**
-
-4. **Start Scanning**
+4. **Start scanning**
    - Set your target scope in Burp (**Target** → **Scope**)
-   - Browse the target application through Burp's proxy
-   - SILENTCHAIN will automatically analyze traffic
-   - View findings in the **Findings** panel and Burp's **Issue Activity**
+   - Enable **passive analysis** in the SILENTCHAIN Community tab (it is OFF by default), then browse the target through Burp's proxy — or right-click any request → **Analyze (SILENTCHAIN)** for on-demand analysis
+   - Findings appear in the SILENTCHAIN Community tab and as native Burp Scanner issues
 
 ### Requirements
 
 - **Cross-platform**: Windows, macOS, Linux
-- **Burp Suite** (Community or Professional)
-- **Jython** (for Python extensions)
+- **Burp Suite** Community or Professional (Professional + AI subscription for the Burp AI provider)
+- **Java 21** (bundled with current Burp releases)
 
 ---
 
@@ -166,7 +152,16 @@ SILENTCHAIN AI™ detects a wide range of security issues including:
 
 ### AI Provider Setup
 
-#### Option 1: Ollama (Recommended for Beginners)
+#### Option 1: Burp AI (Default — zero configuration)
+
+**Requires Burp Suite Professional + an active Burp AI subscription.** No API URL or key
+needed — analysis runs in-process through PortSwigger's Burp AI service and consumes Burp AI
+Credits from your account.
+
+- Provider: `Burp AI`
+- API URL / Key / Model: *(not required)*
+
+#### Option 2: Ollama (Recommended for local / private use)
 
 **Free, local, no API keys required**
 
@@ -191,7 +186,7 @@ SILENTCHAIN AI™ detects a wide range of security issues including:
    - API URL: `http://localhost:11434`
    - Model: `deepseek-r1:latest`
 
-#### Option 2: OpenAI
+#### Option 3: OpenAI
 
 1. Get API key from [platform.openai.com](https://platform.openai.com)
 
@@ -201,7 +196,7 @@ SILENTCHAIN AI™ detects a wide range of security issues including:
    - API Key: `sk-...`
    - Model: `gpt-4` or `gpt-3.5-turbo`
 
-#### Option 3: Claude (Anthropic)
+#### Option 4: Claude (Anthropic)
 
 1. Get API key from [console.anthropic.com](https://console.anthropic.com)
 
@@ -211,7 +206,7 @@ SILENTCHAIN AI™ detects a wide range of security issues including:
    - API Key: Your Anthropic API key
    - Model: `claude-3-5-sonnet-20241022`
 
-#### Option 4: Google Gemini
+#### Option 5: Google Gemini
 
 1. Get API key from [makersuite.google.com](https://makersuite.google.com)
 
@@ -225,12 +220,14 @@ SILENTCHAIN AI™ detects a wide range of security issues including:
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| **AI Provider** | AI service to use | `Ollama` |
-| **API URL** | Provider endpoint | `http://localhost:11434` |
-| **API Key** | Authentication key | *(empty for Ollama)* |
-| **Model** | AI model name | `deepseek-r1:latest` |
+| **AI Provider** | AI service to use | `Burp AI` |
+| **Passive Analysis** | Auto-analyze in-scope proxy traffic | `Off` (opt-in) |
+| **API URL** | Provider endpoint (external providers) | *(provider default)* |
+| **API Key** | Authentication key (external providers) | *(empty)* |
+| **Model** | AI model name (external providers) | *(provider default)* |
 | **Max Tokens** | Response length limit | `2048` |
-| **Verbose Logging** | Enable detailed logs | `True` |
+| **Sanitizer** | Redact secrets/PII before sending | `On` |
+| **Verbose Logging** | Enable detailed logs | `On` |
 
 ---
 
@@ -385,10 +382,10 @@ This forces analysis even if the URL was previously scanned.
 #### "Extension fails to load"
 
 **Solution:**
-- Verify Burp Suite version (Community/Pro)
-- Check Python environment (Jython 2.7)
-- Review `Extender` → `Errors` tab
-- Ensure file permissions are correct
+- Confirm the extension type was set to **Java** when loading the `.jar`
+- Verify Burp Suite is current (2025.2+ for the Burp AI provider) with a Java 21 runtime
+- Review **Extensions → Installed → (SILENTCHAIN Community) → Errors / Output**
+- Re-download the `.jar` if the file may be corrupted
 
 #### High Memory Usage
 
@@ -457,7 +454,8 @@ SILENTCHAIN analyzes HTTP requests and responses intercepted by Burp Suite. Depe
 | **OpenAI** | OpenAI, L.L.C. servers (`api.openai.com`) | HTTP request/response content from in-scope targets |
 | **Claude** | Anthropic, PBC servers (`api.anthropic.com`) | HTTP request/response content from in-scope targets |
 | **Gemini** | Google LLC servers (`generativelanguage.googleapis.com`) | HTTP request/response content from in-scope targets |
-| **Claude Code** | Anthropic, PBC (via local CLI) | HTTP request/response content from in-scope targets |
+| **Azure OpenAI** | Your Azure OpenAI / Foundry resource | HTTP request/response content from in-scope targets |
+| **Burp AI** | PortSwigger Burp AI (in-process) | HTTP request/response content from in-scope targets |
 
 When a cloud AI provider is selected, SILENTCHAIN sends the HTTP request method, URL, headers, body, and response data for each in-scope request to the provider's API for analysis. The built-in **DataSanitizer** (enabled by default) redacts API keys, credentials, session tokens, and other sensitive patterns before transmission, but it cannot guarantee removal of all sensitive data from request/response bodies.
 

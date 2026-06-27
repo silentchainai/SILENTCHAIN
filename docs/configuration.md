@@ -6,18 +6,20 @@ All settings are configured via the in-extension Settings dialog within Burp Sui
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| AI Provider | Ollama | Active provider: Ollama, OpenAI, Claude, Gemini, or ClaudeCode |
-| API URL | `http://localhost:11434` | Provider API endpoint |
-| API Key | (empty) | API key for cloud providers (not needed for Ollama or ClaudeCode) |
-| Model | `llama3.1:8b` | Model name to use for analysis |
+| AI Provider | Burp AI | Active provider: Burp AI, Ollama, OpenAI, Claude, Gemini, or Azure |
+| API URL | (provider default) | Provider API endpoint (external providers) |
+| API Key | (empty) | API key for cloud providers (not needed for Burp AI or Ollama) |
+| Model | (provider default) | Model name to use for analysis (external providers) |
+| Max Tokens | `2048` | Response length limit |
 
 ## Scan Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Scope Only | Enabled | Only analyze requests within Burp's target scope |
-| Auto-Scan | Enabled | Automatically analyze new proxy traffic |
-| Max Request Size | 10KB | Skip requests with bodies larger than this |
+| Passive Analysis | Disabled (opt-in) | Automatically analyze new in-scope proxy traffic |
+| Max Response Size | 200KB | Skip responses with bodies larger than this |
+| Per-host Rate Limit | 10 / min | Cap analyses per host per minute |
 
 ## Severity and Confidence
 

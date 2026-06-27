@@ -2,60 +2,64 @@
 
 ## Overview
 
-SILENTCHAIN AI Community Edition is a single-file Jython Burp Suite extension (~94KB). It implements several Burp interfaces to intercept HTTP traffic, analyze it with AI, and report findings as Burp Scanner Issues.
+SILENTCHAIN Community Edition is a Java Burp Suite extension built on the **Montoya API** and
+packaged as a single shaded `.jar`. It registers Burp handlers to intercept HTTP traffic,
+analyzes it with a configurable AI provider, and reports findings as native Burp Scanner
+issues plus a live table in its own suite tab.
 
 ## Component Diagram
 
 ```
-Burp Suite
+Burp Suite (Montoya API)
   |
   v
-BurpExtender (single .py file)
+SilentchainExtension  (implements BurpExtension)
   |
-  +-- IHttpListener ------> Intercepts proxy traffic
-  +-- IScannerCheck -------> Passive scan integration
-  +-- ITab ----------------> SILENTCHAIN UI tab
-  +-- IContextMenuFactory -> Right-click "Analyze" menu
-  |
-  v
-AI Analysis Thread Pool (background)
-  |
-  +-- DataSanitizer (redacts sensitive data before cloud AI calls)
-  +-- Deduplication (SHA256 hash check)
-  +-- AI Provider (urllib2 HTTP calls or local CLI)
-  |     +-- Ollama API
-  |     +-- OpenAI API
-  |     +-- Claude API
-  |     +-- Gemini API
-  |     +-- Azure Foundry API
-  |     +-- ClaudeCode (local `claude` CLI)
-  +-- RAG Bridge (optional, urllib2 → localhost:8000/retrieve + /feedback)
-  +-- Response Parser (structured finding extraction)
+  +-- HttpHandler (PassiveHttpHandler) --> intercepts in-scope proxy traffic
+  +-- ContextMenuItemsProvider ----------> right-click "Analyze (SILENTCHAIN)"
+  +-- Suite tab (MainTab) ---------------> SILENTCHAIN Community UI (Swing)
   |
   v
-Finding Registration
-  +-- IScanIssue (Burp Scanner Issue)
-  +-- JTable model update (SILENTCHAIN tab)
-  +-- Persistent vulnerability cache (JSON serialization)
+AnalysisOrchestrator  (runs on a worker ThreadPool, off the EDT)
+  |
+  +-- ScanGate -------------> scope / content-type / rate-limit / URL-dedup gating
+  +-- DataSanitizer --------> redacts secrets/PII before cloud AI calls, restores after
+  +-- PromptLibrary --------> structured request/response prompt + system instructions
+  +-- AiDispatcher ---------> routes to the selected provider:
+  |     +-- Burp AI (in-process, Montoya AI)
+  |     +-- Ollama / OpenAI / Claude / Gemini / Azure  (via MontoyaHttpClient)
+  +-- ResponseParser -------> parses the JSON finding array
+  |
+  v
+FindingBuilder
+  +-- AuditIssue -----------> api.siteMap().add(...)  (native Burp Scanner issue)
+  +-- FindingsRegistry -----> SILENTCHAIN Community findings table (+ CSV export)
 ```
 
 ## Data Flow
 
-1. HTTP request/response passes through Burp's proxy.
-2. `IHttpListener.processHttpMessage()` captures the traffic.
-3. Deduplication check: SHA256(URL + parameters). Skip if already analyzed.
-4. DataSanitizer redacts sensitive data (API keys, credentials, PII) from the prompt (if enabled).
-5. Background thread sends request/response data to the configured AI provider.
-6. AI returns structured analysis with vulnerability type, severity, confidence, and description.
-7. DataSanitizer restores original values in the AI response (replaces `[REDACTED_*]` placeholders).
-8. Finding is registered as a Burp Scanner Issue and added to the SILENTCHAIN tab.
+1. HTTP request/response passes through Burp's proxy; `PassiveHttpHandler` receives it.
+2. `ScanGate` applies gating: in-scope-only, allowed tool source, content-type allow-list,
+   per-host rate limit, and URL deduplication (TTL + capacity bounded).
+3. `DataSanitizer` redacts sensitive values (API keys, credentials, PII) from the prompt
+   (skipped for local/in-process providers).
+4. `AnalysisOrchestrator` (on the worker pool) builds the prompt via `PromptLibrary` and calls
+   the selected provider through `AiDispatcher`.
+5. The provider returns a JSON array of findings; `ResponseParser` extracts them and
+   `DataSanitizer` restores any redacted values.
+6. `FindingBuilder` emits each finding as a Burp `AuditIssue` and a row in the findings table.
 
 ## Key Design Decisions
 
-- **Single file:** Burp's Jython extension loader requires a single .py file entry point. All code lives in one file to simplify loading.
-- **No external packages:** Only Jython stdlib and Burp API imports are used. `urllib2` handles all HTTP communication.
-- **Thread pool:** Configurable thread pool for parallel AI analysis requests. Keeps the Swing EDT responsive while processing multiple requests concurrently.
-- **Java Swing UI:** All GUI components use `javax.swing` since that is what Burp's extension API provides.
-- **Persistent cache:** Findings are serialized to JSON and survive extension reload / Burp restart. The cache is keyed by SHA256(URL + parameters) for deduplication.
-- **CSV export:** Findings can be exported to CSV directly from the extension UI.
-- **RAG integration:** Optional HTTP bridge to the RAG Security Knowledge Engine at `localhost:8000` via `urllib2`. Sends `/retrieve` queries for context enrichment during analysis and `/feedback` calls for verified findings.
+- **Montoya API:** Modern Burp extension API; the entry point is
+  `SilentchainExtension.initialize(MontoyaApi)`. All outbound LLM HTTP uses Burp's networking
+  (`MontoyaHttpClient` → `api.http().sendRequest`) rather than a JVM HTTP stack.
+- **Multi-module source, single jar:** Code is organized by package
+  (`ai`, `config`, `data`, `net`, `scan`, `state`, `ui`, `util`) and built with Gradle +
+  the Shadow plugin into one self-contained `.jar`.
+- **Worker thread pool:** Analysis runs on a background pool (`util/ThreadPool`) so blocking
+  AI calls never touch Burp's HTTP-handler thread or the Swing EDT.
+- **Preferences persistence:** Settings are stored via `api.persistence().preferences()`
+  (`config/SettingsPersistence`), surviving extension reload / Burp restart.
+- **Java Swing UI:** The suite tab and dialogs use `javax.swing`, themed to match Burp.
+- **CSV export:** Findings can be exported to CSV from the extension UI.

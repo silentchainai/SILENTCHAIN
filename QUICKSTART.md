@@ -6,12 +6,14 @@ Get up and running with SILENTCHAIN AI™ in under 5 minutes.
 
 ## Prerequisites
 
-- Burp Suite (Community or Professional)
-- One of the following:
-  - Ollama (free, local) - **RECOMMENDED**
+- Burp Suite (Professional recommended; Community works with external providers)
+- One AI provider:
+  - **Burp AI** (default, zero-config; Burp Suite Professional + AI subscription)
+  - Ollama (free, local) - **RECOMMENDED for local/private use**
   - OpenAI API key
   - Claude API key
   - Gemini API key
+  - Azure OpenAI / Foundry
 
 ---
 
@@ -19,22 +21,21 @@ Get up and running with SILENTCHAIN AI™ in under 5 minutes.
 
 ### Step 1: Download SILENTCHAIN
 
-```bash
-git clone https://github.com/silentchainai/SILENTCHAIN.git
-cd silentchain-ai
-```
-
-Or download the latest release: [GitHub Releases](https://github.com/silentchainai/SILENTCHAIN/releases)
+Download the latest `silentchain-community-edition-X.Y.Z.jar` from
+[GitHub Releases](https://github.com/silentchainai/SILENTCHAIN/releases).
 
 ### Step 2: Load in Burp Suite
 
 1. Open Burp Suite
-2. Go to: `Extender` → `Extensions` → `Add`
-3. Extension type: `Python`
-4. Select `silentchain_ai_community.py`
+2. Go to: `Extensions` → `Installed` → `Add`
+3. Extension type: `Java`
+4. Select the downloaded `.jar`
 5. Click `Next`
 
-### Step 3: Install Ollama (Recommended)
+> Using the default **Burp AI** provider? You can skip Step 3 — it works with no setup
+> (Burp Suite Professional + an active Burp AI subscription required).
+
+### Step 3: Install Ollama (optional, for local/private analysis)
 
 **macOS/Linux:**
 ```bash
@@ -81,8 +82,11 @@ Set browser proxy to Burp:
 
 ### Start Browsing
 
+> In the `SILENTCHAIN Community` tab, enable **passive analysis** first — it is OFF by
+> default. (Or skip this and right-click any request → **Analyze (SILENTCHAIN)**.)
+
 1. Navigate to your target site through the browser
-2. Watch the `SILENTCHAIN` tab:
+2. Watch the `SILENTCHAIN Community` tab:
    - **Console**: Shows real-time analysis
    - **Findings**: Displays detected vulnerabilities
 3. Check `Target` → `Issue Activity` for Burp-integrated findings

@@ -13,6 +13,27 @@ _No unreleased changes._
 
 ---
 
+## [1.3.0] - 2026-06-27
+
+### Changed
+- **Rewritten as a native Java extension on the Burp Montoya API.** The Community Edition is
+  no longer a single-file Jython/Python extension (`silentchain_ai_community.py`); it is now a
+  Gradle-built Java project packaged as `silentchain-community-edition-X.Y.Z.jar`. Install via
+  **Extensions → Installed → Add → type: Java**.
+- **Default provider is now Burp AI** (in-process; Burp Suite Professional + AI subscription),
+  with Ollama, OpenAI, Claude, Gemini, and Azure OpenAI/Foundry as alternatives.
+- Passive analysis is **off by default** (opt-in) per PortSwigger guidance for credit-consuming
+  AI extensions; on-demand analysis via right-click **Analyze (SILENTCHAIN)**.
+- Findings emitted as native Burp Scanner issues; structured, parameter-aware prompts improve
+  injection/logic detection (SQLi, LFI/path traversal, XSS, open redirect, CSRF).
+- Docs updated to the Java edition; legacy Python source removed.
+
+### Removed
+- Legacy Python/Jython source (`silentchain_ai_community.py`) and the ClaudeCode CLI provider
+  (Professional-only).
+
+---
+
 ## [1.2.0] - 2026-03-29
 
 ### Added

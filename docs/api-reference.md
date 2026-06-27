@@ -1,49 +1,52 @@
-# API Reference — SILENTCHAIN AI Community Edition
+# API Reference — SILENTCHAIN Community Edition
 
-SILENTCHAIN Community is a Burp Suite extension — it does not expose a standalone HTTP API. All interaction happens through Burp Suite's interfaces.
+SILENTCHAIN Community is a Burp Suite extension — it does not expose a standalone HTTP API.
+All interaction happens through Burp Suite's **Montoya API**.
 
 ---
 
-## Burp Suite Java Interfaces
+## Montoya integration points
 
-The extension implements these Burp Suite interfaces, accessible programmatically via Burp's Extender API:
+The extension wires itself into Burp from `SilentchainExtension.initialize(MontoyaApi api)`:
 
-### IBurpExtender
+### Entry point
+- `BurpExtension.initialize(MontoyaApi)` — registers handlers, the context menu, and the suite
+  tab; sets the extension name; loads persisted settings.
 
-- `registerExtenderCallbacks(callbacks)` — Entry point. Registers all listeners, UI tabs, and context menus.
+### HTTP interception
+- `api.http().registerHttpHandler(PassiveHttpHandler)` — passive analysis of in-scope proxy
+  traffic. Gating (scope, content-type, rate limit, URL dedup) is applied by `ScanGate`.
 
-### IHttpListener
+### UI tab
+- `api.userInterface().registerSuiteTab("SILENTCHAIN Community", MainTab)` — the dashboard
+  (settings, findings table, task table, console, statistics).
 
-- `processHttpMessage(toolFlag, messageIsRequest, messageInfo)` — Intercepts HTTP traffic. Only processes responses (`messageIsRequest=False`) that are in scope and pass the static file filter.
+### Context menu
+- `api.userInterface().registerContextMenuItemsProvider(ContextMenuProvider)` — adds
+  **Analyze (SILENTCHAIN)** to Proxy / Site map / Repeater for on-demand analysis.
 
-### IScannerCheck
+### Findings
+- `api.siteMap().add(AuditIssue)` — each finding is emitted as a native Burp Scanner issue
+  (built by `FindingBuilder`).
 
-- `doPassiveScan(baseRequestResponse)` — Called by Burp's scanner. Returns `IScanIssue` list with AI-generated findings.
-- `doActiveScan(baseRequestResponse, insertionPoint)` — Not implemented (Community is passive-only).
-
-### ITab
-
-- `getTabCaption()` — Returns `"SILENTCHAIN AI"`.
-- `getUiComponent()` — Returns the main Swing panel with settings, findings table, and controls.
-
-### IContextMenuFactory
-
-- `createMenuItems(invocation)` — Adds right-click menu items: "Analyze with SILENTCHAIN AI", "Analyze Selected Text".
+### Persistence
+- `api.persistence().preferences()` — settings storage (`config/SettingsPersistence`).
 
 ---
 
 ## AI Provider APIs
 
-The extension communicates with one configured AI provider:
+The extension communicates with one configured AI provider, routed by `ai/AiDispatcher`:
 
 | Provider | Endpoint | Auth |
 |----------|----------|------|
+| Burp AI | In-process (Montoya AI); no external endpoint | Burp AI subscription / credits |
 | Ollama | `POST {api_url}/api/generate` | None |
-| OpenAI | `POST {api_url}/v1/chat/completions` | `Authorization: Bearer {key}` |
-| Claude | `POST {api_url}/v1/messages` | `x-api-key: {key}` |
-| Gemini | `POST {api_url}/v1beta/models/{model}:generateContent` | `?key={key}` |
-| ClaudeCode | Local CLI: `claude -p` | None (uses local auth) |
+| OpenAI | `POST {api_url}/chat/completions` | `Authorization: Bearer {key}` |
+| Claude | `POST {api_url}/messages` | `x-api-key: {key}` |
+| Gemini | `POST {api_url}/models/{model}:generateContent` | `?key={key}` |
+| Azure | `POST {api_url}/openai/deployments/{deployment}/chat/completions?api-version=...` | `api-key: {key}` |
 
-All AI requests use the same structured prompt format requesting JSON output with OWASP classification, severity, confidence, and remediation details.
-
-The **ClaudeCode** provider invokes the locally installed `claude` CLI via subprocess rather than making HTTP requests. No API key or URL configuration is needed — the CLI handles authentication independently.
+All external-provider HTTP goes through `net/MontoyaHttpClient` (Burp's networking). Every
+provider is sent the same structured prompt requesting JSON output with OWASP classification,
+severity, confidence, CWE, evidence, and remediation, parsed by `ai/ResponseParser`.

@@ -9,7 +9,7 @@
 
 ## Manual Analysis
 
-Right-click any request in Burp's **Proxy History** or **Repeater** and select **SILENTCHAIN > Analyze Request** to force re-analysis of a specific request, even if it was previously analyzed.
+Right-click any request in Burp's **Proxy History**, **Site map**, or **Repeater** and select **Analyze (SILENTCHAIN)** to analyze a specific request on demand, even if it was previously analyzed.
 
 ## Findings Table
 
@@ -26,16 +26,12 @@ Use the severity filter buttons to show/hide findings by severity level. Click c
 
 ## Export
 
-Findings are registered as Burp Scanner Issues and appear in Burp's **Target > Issues** panel. They can be exported using Burp's built-in report generation.
-
-## ClaudeCode Provider
-
-When using the **ClaudeCode** provider, analysis is performed via the locally installed `claude` CLI rather than a remote API. No API key or URL is needed — just select "ClaudeCode" in the provider dropdown. The CLI must be installed and authenticated on your machine.
+Findings are registered as Burp Scanner Issues and appear in Burp's **Target > Issues** panel. They can be exported using Burp's built-in report generation, or via the extension's **Export CSV** button.
 
 ## Tips
 
-- Use **Ollama** with a local model for offline scanning (no data leaves your machine).
-- **ClaudeCode** also keeps data local — analysis runs through the Claude CLI on your machine.
+- Use **Burp AI** (default) for zero-config, in-process analysis (Burp Suite Professional).
+- Use **Ollama** with a local model for fully offline scanning (no data leaves your machine).
 - The **DataSanitizer** (enabled by default) redacts sensitive data before sending to cloud providers. Disable it for local-only setups if desired.
 - For large applications, start with a targeted crawl of key functionality rather than full-site spidering.
 - Review Tentative findings carefully — they may need manual verification.

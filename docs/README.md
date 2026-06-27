@@ -1,6 +1,8 @@
 # SILENTCHAIN Community Documentation
 
-SILENTCHAIN Community is a Jython-based Burp Suite extension that provides AI-powered security analysis of HTTP traffic. It passively analyzes proxied requests and responses, identifying OWASP Top 10 vulnerabilities using configurable AI providers.
+SILENTCHAIN Community is a Java (Montoya API) Burp Suite extension that provides AI-powered
+security analysis of HTTP traffic. It passively analyzes proxied requests and responses,
+identifying OWASP Top 10 vulnerabilities using configurable AI providers.
 
 ## Documentation Index
 
@@ -16,14 +18,13 @@ SILENTCHAIN Community is a Jython-based Burp Suite extension that provides AI-po
 ## Overview
 
 - **Type:** Burp Suite Extension (passive scanner)
-- **Language:** Python 2.7 (Jython)
-- **AI Providers:** Ollama, OpenAI, Claude, Gemini, ClaudeCode (local CLI)
+- **Language:** Java 21 (Burp Montoya API)
+- **AI Providers:** Burp AI (default), Ollama, OpenAI, Claude, Gemini, Azure OpenAI/Foundry
 - **Coverage:** OWASP Top 10 vulnerability categories
 
 ## Quick Start
 
-1. Install Jython 2.7.4 standalone JAR
-2. Configure Jython in Burp > Extender > Options > Python Environment
-3. Load `silentchain_ai_community.py` in Burp > Extender > Extensions
-4. Configure your AI provider in the SILENTCHAIN tab
-5. Proxy traffic through Burp and review findings
+1. Download the latest `silentchain-community-edition-X.Y.Z.jar` from the Releases page.
+2. In Burp Suite: **Extensions > Installed > Add**, set Extension type to **Java**, and select the `.jar`.
+3. Configure your AI provider in the **SILENTCHAIN Community** tab (Burp AI works with no setup).
+4. Enable passive analysis (off by default), proxy traffic through Burp, and review findings.

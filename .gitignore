@@ -7,6 +7,7 @@ releases/
 tests/
 CLAUDE.md
 Makefile
+release.sh
 
 # Secrets and credentials — CRITICAL for AI API key safety
 .env
@@ -39,10 +40,18 @@ _cache/
 .tox/
 .python-version
 
-# Java/Burp Suite artifacts
+# Java / Gradle / Burp Suite artifacts
 *.class
 *.jar
 *.war
+.gradle/
+build/
+out/
+bin/
+*.iml
+*.ipr
+*.iws
+local.properties
 
 # Database and scan data
 *.sqlite

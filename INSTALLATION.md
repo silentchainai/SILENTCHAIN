@@ -21,18 +21,19 @@ Complete step-by-step installation and setup guide for SILENTCHAIN AI™.
 
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
-| **Burp Suite** | Community or Professional (latest) | [Download here](https://portswigger.net/burp/communitydownload) |
-| **Java** | Version 8 or higher | Required by Burp Suite |
-| **Python** | 2.7 (Jython) | Included with Burp Suite |
+| **Burp Suite** | Professional 2025.2+ (recommended) or Community | Professional + AI subscription required for the Burp AI provider · [Download](https://portswigger.net/burp/communitydownload) |
+| **Java** | Version 21 | Bundled with current Burp releases |
 
 ### AI Provider (Choose One)
 
 | Provider | Cost | Setup Complexity | Privacy |
 |----------|------|------------------|---------|
+| **Burp AI** | Burp AI Credits | None (default) | In-process (PortSwigger) |
 | **Ollama** | Free | Easy | 100% Local |
 | **OpenAI** | Paid | Easy | Cloud |
 | **Claude** | Paid | Easy | Cloud |
 | **Gemini** | Free/Paid | Easy | Cloud |
+| **Azure OpenAI** | Paid | Moderate | Cloud (your tenant) |
 
 ### System Resources
 
@@ -48,13 +49,8 @@ Complete step-by-step installation and setup guide for SILENTCHAIN AI™.
 
 #### Step 1: Download SILENTCHAIN
 
-```bash
-# Clone the repository
-git clone https://github.com/silentchainai/SILENTCHAIN.git
-
-# Or download ZIP
-# https://github.com/silentchainai/SILENTCHAIN/archive/refs/heads/main.zip
-```
+Download the latest `silentchain-community-edition-X.Y.Z.jar` from the
+[Releases](https://github.com/silentchainai/SILENTCHAIN/releases) page.
 
 #### Step 2: Load in Burp Suite
 
@@ -63,25 +59,25 @@ git clone https://github.com/silentchainai/SILENTCHAIN.git
 
 2. **Navigate to Extensions**
    ```
-   Burp Menu → Extender → Extensions → Add
+   Extensions → Installed → Add
    ```
 
 3. **Configure Extension**
-   - **Extension type**: Select `Python`
+   - **Extension type**: Select `Java`
    - **Extension file**: Click `Select file...`
-   - Navigate to `silentchain_ai_community.py`
-   - Click `Open`
+   - Navigate to the downloaded `silentchain-community-edition-X.Y.Z.jar`
+   - Click `Open`, then `Next`
 
 4. **Verify Loading**
    - Extension should appear in the list
    - Check for errors in the `Errors` tab
-   - Look for "SILENTCHAIN" tab in main Burp window
+   - Look for the "SILENTCHAIN Community" tab in the main Burp window
 
 #### Step 3: Verify Installation
 
-- A new `SILENTCHAIN` tab should appear in Burp
-- Console should display the SILENTCHAIN logo
-- Status bar should show extension loaded
+- A new `SILENTCHAIN Community` tab should appear in Burp
+- The Output tab should display the SILENTCHAIN banner
+- The extension shows as loaded in the Extensions list
 
 ---
 
@@ -290,14 +286,14 @@ SILENTCHAIN only analyzes in-scope targets:
 
 Run through this checklist to verify installation:
 
-- [ ] SILENTCHAIN tab visible in Burp
-- [ ] No errors in Extender → Errors tab
-- [ ] AI connection test passes (green ✓)
-- [ ] Console shows logo and initialization message
+- [ ] SILENTCHAIN Community tab visible in Burp
+- [ ] No errors in Extensions → Installed → (SILENTCHAIN) → Errors
+- [ ] AI connection test passes (Test Connection)
+- [ ] Output tab shows the banner and initialization message
 - [ ] Target scope is configured
 - [ ] Browser proxy is set to Burp (127.0.0.1:8080)
-- [ ] Test request analyzed (check Console for "[HTTP]" logs)
-- [ ] Findings appear in Findings panel
+- [ ] Passive analysis enabled (or use right-click Analyze)
+- [ ] Findings appear in the Findings panel
 
 ### Test Request
 
@@ -306,9 +302,9 @@ Force analysis of a single request:
 1. Browse any in-scope URL
 2. Go to `Proxy` → `HTTP history`
 3. Right-click on a request
-4. Select `SILENTCHAIN - Analyze Request`
-5. Check Console for analysis logs
-6. Check Findings panel for results
+4. Select `Analyze (SILENTCHAIN)`
+5. Check the Output/Console for analysis logs
+6. Check the Findings panel for results
 
 ---
 
@@ -319,13 +315,10 @@ Force analysis of a single request:
 **Error**: "Failed to load extension"
 
 **Solutions**:
-1. Check Python environment:
-   ```
-   Extender → Options → Python Environment
-   Ensure "Jython standalone JAR file" is set
-   ```
-2. Verify file permissions (must be readable)
-3. Check for syntax errors in `Extender` → `Errors`
+1. Confirm the extension type was set to **Java** when loading the `.jar`
+2. Verify you are running a current Burp (2025.2+) with a Java 21 runtime
+3. Check **Extensions → Installed → (SILENTCHAIN Community) → Errors** for details
+4. Re-download the `.jar` if it may be corrupted
 
 ---
 
@@ -438,12 +431,12 @@ ollama serve
 **Solutions**:
 1. **Check Burp logs**:
    ```
-   Extender → Errors tab
+   Extensions → Installed → (SILENTCHAIN Community) → Errors
    ```
 
 2. **Restart extension**:
    ```
-   Extender → Extensions → Unload → Re-load
+   Extensions → Installed → uncheck "Loaded" → re-check
    ```
 
 3. **Report the bug**:
