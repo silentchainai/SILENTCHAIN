@@ -26,6 +26,8 @@ public class SettingsPersistence {
     private static final String K_MAX_TOKENS        = "silentchain.maxTokens";
     private static final String K_AZURE_API_VERSION = "silentchain.azureApiVersion";
     private static final String K_REQUEST_TIMEOUT   = "silentchain.requestTimeoutSeconds";
+    private static final String K_OLLAMA_STRUCTURED = "silentchain.ollamaStructuredOutput";
+    private static final String K_OLLAMA_NUM_CTX    = "silentchain.ollamaNumCtx";
 
     // UI
     private static final String K_THEME             = "silentchain.theme";
@@ -61,6 +63,8 @@ public class SettingsPersistence {
         i = prefs.getInteger(K_MAX_TOKENS);       if (i != null) into.setMaxTokens(i);
         s = prefs.getString(K_AZURE_API_VERSION); if (s != null) into.setAzureApiVersion(s);
         i = prefs.getInteger(K_REQUEST_TIMEOUT);  if (i != null) into.setRequestTimeoutSeconds(i);
+        s = prefs.getString(K_OLLAMA_STRUCTURED); if (s != null) into.setOllamaStructuredOutput(safeStructured(s));
+        i = prefs.getInteger(K_OLLAMA_NUM_CTX);   if (i != null) into.setOllamaNumCtx(i);
 
         s = prefs.getString(K_THEME);             if (s != null) into.setTheme(safeTheme(s));
     }
@@ -82,6 +86,8 @@ public class SettingsPersistence {
         prefs.setInteger(K_MAX_TOKENS, from.maxTokens());
         prefs.setString(K_AZURE_API_VERSION, from.azureApiVersion());
         prefs.setInteger(K_REQUEST_TIMEOUT, from.requestTimeoutSeconds());
+        prefs.setString(K_OLLAMA_STRUCTURED, from.ollamaStructuredOutput().name());
+        prefs.setInteger(K_OLLAMA_NUM_CTX, from.ollamaNumCtx());
 
         prefs.setString(K_THEME, from.theme().name());
     }
@@ -108,6 +114,14 @@ public class SettingsPersistence {
             return Settings.ThemeChoice.valueOf(name);
         } catch (Throwable t) {
             return Settings.ThemeChoice.DARK;
+        }
+    }
+
+    private static Settings.StructuredOutput safeStructured(String name) {
+        try {
+            return Settings.StructuredOutput.valueOf(name);
+        } catch (Throwable t) {
+            return Settings.StructuredOutput.SCHEMA;
         }
     }
 }

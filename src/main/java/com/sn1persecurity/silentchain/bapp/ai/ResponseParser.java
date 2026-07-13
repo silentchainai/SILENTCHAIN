@@ -11,6 +11,8 @@ import java.util.List;
 
 public final class ResponseParser {
 
+    private static final String[] WRAPPER_KEYS = {"findings", "results", "vulnerabilities", "issues"};
+
     private ResponseParser() {}
 
     public static List<ParsedFinding> parse(String aiResponse) {
@@ -87,9 +89,13 @@ public final class ResponseParser {
             // fall through
         }
 
-        // Try single object - wrap in array
+        // Try single object - could be a wrapper {"findings":[...]} or a lone finding
         try {
             JSONObject obj = new JSONObject(s);
+            JSONArray unwrapped = unwrapFindings(obj);
+            if (unwrapped != null) {
+                return unwrapped;
+            }
             JSONArray wrapper = new JSONArray();
             wrapper.put(obj);
             return wrapper;
@@ -108,12 +114,16 @@ public final class ResponseParser {
             }
         }
 
-        // Try to locate a {...} substring and wrap
+        // Try to locate a {...} substring - unwrap if it's an envelope, else wrap as one finding
         int objStart = s.indexOf('{');
         int objEnd = s.lastIndexOf('}');
         if (objStart >= 0 && objEnd > objStart) {
             try {
                 JSONObject obj = new JSONObject(s.substring(objStart, objEnd + 1));
+                JSONArray unwrapped = unwrapFindings(obj);
+                if (unwrapped != null) {
+                    return unwrapped;
+                }
                 JSONArray wrapper = new JSONArray();
                 wrapper.put(obj);
                 return wrapper;
@@ -122,6 +132,99 @@ public final class ResponseParser {
             }
         }
 
+        // Last resort: the whole JSON is malformed/truncated (e.g. a local model ran a field
+        // into num_predict, cutting off the response mid-object). Salvage every COMPLETE finding
+        // object by brace-matching so findings emitted before the truncation still survive.
+        return salvageFindingObjects(s);
+    }
+
+    /**
+     * Scan for balanced {@code {...}} objects that parse as JSON and carry a non-empty
+     * "title", collecting them into an array. Tolerates a truncated tail (the unterminated
+     * final object is simply skipped). Returns null if none are recoverable.
+     */
+    private static JSONArray salvageFindingObjects(String s) {
+        JSONArray out = new JSONArray();
+        int i = 0;
+        int n = s.length();
+        while (i < n) {
+            if (s.charAt(i) == '{') {
+                int end = matchBrace(s, i);
+                if (end >= 0) {
+                    try {
+                        JSONObject o = new JSONObject(s.substring(i, end + 1));
+                        if (!o.optString("title", "").trim().isEmpty()) {
+                            out.put(o);
+                            i = end + 1;
+                            continue;
+                        }
+                    } catch (JSONException ignored) {
+                        // not a standalone object; fall through and advance
+                    }
+                }
+            }
+            i++;
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    /** Index of the {@code }} matching the {@code {} at {@code start}, or -1 if unterminated. */
+    private static int matchBrace(String s, int start) {
+        int depth = 0;
+        boolean inStr = false;
+        boolean esc = false;
+        for (int i = start; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (inStr) {
+                if (esc) {
+                    esc = false;
+                } else if (c == '\\') {
+                    esc = true;
+                } else if (c == '"') {
+                    inStr = false;
+                }
+            } else if (c == '"') {
+                inStr = true;
+            } else if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * If {@code obj} is an envelope wrapping the findings array (e.g. {"findings":[...]} as
+     * emitted by Ollama/Mistral in JSON mode), return the inner array; otherwise null so the
+     * caller treats {@code obj} as a single bare finding.
+     */
+    private static JSONArray unwrapFindings(JSONObject obj) {
+        for (String key : WRAPPER_KEYS) {
+            JSONArray inner = obj.optJSONArray(key);
+            if (inner != null) {
+                return inner;
+            }
+        }
+        // Safety net: an envelope with no "title" of its own but exactly one array-valued key is
+        // almost certainly a wrapper under an unexpected key name.
+        if (obj.optString("title", "").trim().isEmpty()) {
+            JSONArray sole = null;
+            int arrays = 0;
+            for (String key : obj.keySet()) {
+                JSONArray val = obj.optJSONArray(key);
+                if (val != null) {
+                    sole = val;
+                    arrays++;
+                }
+            }
+            if (arrays == 1) {
+                return sole;
+            }
+        }
         return null;
     }
 }

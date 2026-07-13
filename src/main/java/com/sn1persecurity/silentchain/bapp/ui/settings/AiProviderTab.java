@@ -42,6 +42,9 @@ public class AiProviderTab extends JPanel {
     private final JButton refreshBtn = new JButton("Refresh");
     private final JTextField maxTokens = new JTextField(8);
     private final JTextField azureApiVersion = new JTextField(16);
+    private final JComboBox<String> ollamaStructured =
+            new JComboBox<>(new String[] {"schema", "json", "off"});
+    private final JTextField ollamaNumCtx = new JTextField(8);
     private final JButton testBtn = new JButton("Test Connection");
     private final JLabel statusLabel = new JLabel(" ");
 
@@ -56,6 +59,13 @@ public class AiProviderTab extends JPanel {
             providerCombo.addItem(p.displayName());
         }
 
+        ollamaNumCtx.setToolTipText("Ollama context window (num_ctx) in tokens. Too small silently "
+                + "truncates the prompt and the model returns no findings. Must exceed prompt + Max "
+                + "Tokens; default 8192.");
+        ollamaStructured.setToolTipText("How the Ollama request constrains output. 'schema' (default) "
+                + "forces {\"findings\":[...]} and is the most reliable on small local models; 'json' "
+                + "is the legacy loose JSON mode; 'off' relies on the prompt only.");
+
         int row = 0;
         addRow(row++, "AI Provider:", providerCombo);
         addRow(row++, "API URL:", apiUrl);
@@ -63,6 +73,8 @@ public class AiProviderTab extends JPanel {
         addRow(row++, "Model:", modelRow());
         addRow(row++, "Max Tokens:", maxTokens);
         addRow(row++, "Azure API Version:", azureApiVersion);
+        addRow(row++, "Ollama structured output:", ollamaStructured);
+        addRow(row++, "Ollama context (num_ctx):", ollamaNumCtx);
         addRow(row++, "", testBtn);
         addRow(row++, "", statusLabel);
         addHelp(row++);
@@ -81,6 +93,8 @@ public class AiProviderTab extends JPanel {
         setModel(settings.model());
         maxTokens.setText(Integer.toString(settings.maxTokens()));
         azureApiVersion.setText(settings.azureApiVersion());
+        ollamaStructured.setSelectedItem(structuredToCombo(settings.ollamaStructuredOutput()));
+        ollamaNumCtx.setText(Integer.toString(settings.ollamaNumCtx()));
         applyEnablement();
     }
 
@@ -92,6 +106,25 @@ public class AiProviderTab extends JPanel {
         settings.setModel(m != null ? m.toString().trim() : "");
         settings.setMaxTokens(parseInt(maxTokens.getText(), settings.maxTokens()));
         settings.setAzureApiVersion(azureApiVersion.getText().trim());
+        settings.setOllamaStructuredOutput(comboToStructured(ollamaStructured.getSelectedItem()));
+        settings.setOllamaNumCtx(parseInt(ollamaNumCtx.getText(), settings.ollamaNumCtx()));
+    }
+
+    private static String structuredToCombo(Settings.StructuredOutput mode) {
+        return switch (mode) {
+            case SCHEMA -> "schema";
+            case JSON -> "json";
+            case OFF -> "off";
+        };
+    }
+
+    private static Settings.StructuredOutput comboToStructured(Object sel) {
+        String s = sel != null ? sel.toString() : "schema";
+        return switch (s) {
+            case "json" -> Settings.StructuredOutput.JSON;
+            case "off" -> Settings.StructuredOutput.OFF;
+            default -> Settings.StructuredOutput.SCHEMA;
+        };
     }
 
     // ---- Handlers -----------------------------------------------------------
@@ -111,13 +144,16 @@ public class AiProviderTab extends JPanel {
         ProviderId p = selectedProvider();
         boolean burpAi = p == ProviderId.BURP_AI;
         boolean azure = p == ProviderId.AZURE_FOUNDRY;
+        boolean ollama = p == ProviderId.OLLAMA;
 
         apiUrl.setEnabled(!burpAi);
-        apiKey.setEnabled(!burpAi && p != ProviderId.OLLAMA);
+        apiKey.setEnabled(!burpAi && !ollama);
         modelCombo.setEnabled(!burpAi);
         refreshBtn.setEnabled(!burpAi && !azure);
         maxTokens.setEnabled(!burpAi);
         azureApiVersion.setEnabled(azure);
+        ollamaStructured.setEnabled(ollama);   // local-model output-shape tuning
+        ollamaNumCtx.setEnabled(ollama);
 
         if (burpAi) {
             statusLabel.setText("Burp AI runs in-process and uses your Burp AI Credits.");
@@ -231,7 +267,9 @@ public class AiProviderTab extends JPanel {
         JTextArea help = new JTextArea(
                 "Provider notes:\n" +
                 "  - Burp AI: default; in-process; uses Burp AI Credits; no key needed.\n" +
-                "  - Ollama: local; default http://localhost:11434; no key.\n" +
+                "  - Ollama: local; default http://localhost:11434; no key. Uses /api/chat with a\n" +
+                "    JSON schema forcing findings output. If a model returns no findings, raise\n" +
+                "    'Ollama context (num_ctx)' or keep 'Ollama structured output' = schema.\n" +
                 "  - OpenAI: https://api.openai.com/v1; Bearer API key.\n" +
                 "  - Claude: https://api.anthropic.com/v1; x-api-key.\n" +
                 "  - Gemini: https://generativelanguage.googleapis.com/v1; key in query.\n" +

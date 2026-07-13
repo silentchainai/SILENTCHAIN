@@ -43,6 +43,26 @@ public class Settings {
     private volatile String azureApiVersion = "2024-06-01";
     private volatile int requestTimeoutSeconds = 60;
 
+    // ---- Ollama (local model) tuning ---------------------------------------
+
+    /**
+     * How the Ollama request constrains output structure.
+     *  SCHEMA - send a JSON schema forcing {"findings":[...]} (most reliable on small
+     *           local models; default).
+     *  JSON   - legacy format:"json" (valid JSON but not shape-constrained; small models
+     *           may emit a bare "{}").
+     *  OFF    - no format field; rely on the prompt (matches the cloud providers).
+     */
+    public enum StructuredOutput { SCHEMA, JSON, OFF }
+
+    private volatile StructuredOutput ollamaStructuredOutput = StructuredOutput.SCHEMA;
+
+    /**
+     * Ollama context window (num_ctx) in tokens. Must exceed prompt tokens + Max Tokens,
+     * otherwise Ollama silently truncates the prompt and the model returns no findings.
+     */
+    private volatile int ollamaNumCtx = 8192;
+
     // ---- UI -----------------------------------------------------------------
 
     public enum ThemeChoice { LIGHT, DARK }
@@ -111,6 +131,14 @@ public class Settings {
 
     public int requestTimeoutSeconds() { return requestTimeoutSeconds; }
     public void setRequestTimeoutSeconds(int v) { this.requestTimeoutSeconds = Math.max(5, v); }
+
+    public StructuredOutput ollamaStructuredOutput() { return ollamaStructuredOutput; }
+    public void setOllamaStructuredOutput(StructuredOutput v) {
+        this.ollamaStructuredOutput = v != null ? v : StructuredOutput.SCHEMA;
+    }
+
+    public int ollamaNumCtx() { return ollamaNumCtx; }
+    public void setOllamaNumCtx(int v) { this.ollamaNumCtx = Math.max(2048, v); }
 
     public ThemeChoice theme() { return theme; }
     public void setTheme(ThemeChoice v) { this.theme = v != null ? v : ThemeChoice.DARK; }

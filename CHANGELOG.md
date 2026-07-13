@@ -9,7 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Fixed
+- Local Ollama models (e.g. `deepseek-coder-v2`, `qwen3`) returning zero findings from Analyze. Root cause: `OllamaProvider` posted to `/api/generate` with a raw `[SYSTEM]/[USER]` prompt blob and `format:"json"`, so small models satisfied the JSON grammar with a bare `{}` (silently parsed to zero findings); reasoning models also burned the request timeout emitting a `<think>` block or looped a string field until the JSON truncated.
+
+### Changed
+- `OllamaProvider` now uses `POST /api/chat` with system/user message roles and, by default, an Ollama structured-output **JSON schema** forcing `{"findings":[...]}` (unwrapped by `ResponseParser`), with `maxLength`/`maxItems` bounds that stop runaway generation. Sets `num_ctx` (default 8192), `keep_alive`, `think:false`, and `repeat_penalty:1.3`; extracts content from both `/api/chat` and `/api/generate` shapes; falls back to the first installed model when none is set; warns on a degenerate `{}`.
+- New Ollama tuning knobs in Settings → AI Provider (Ollama only): **Ollama structured output** (`schema`/`json`/`off`) and **Ollama context (num_ctx)**, both persisted.
+- System prompt + prompt builder now request the `{"findings":[...]}` object contract (the parser already accepted both shapes).
+- `ResponseParser` gained a truncated-JSON salvage path that recovers finding objects completed before any cut-off.
+
+---
+
+## [1.3.1] - 2026-07-13
+
+### Summary
+- Fix local Ollama zero-findings on small models: /api/chat + JSON-schema structured output (findings-object) + num_ctx/think:false/repeat_penalty; ResponseParser truncated-JSON salvage; Ollama structured-output + num_ctx settings
 
 ---
 
