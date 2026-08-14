@@ -2020,13 +2020,16 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
 
             # Fallback: test the chat completions endpoint directly.
             chat_url = self._build_azure_chat_url(endpoint_no_query)
+            is_o_series = self.MODEL and (self.MODEL.startswith("o1") or self.MODEL.startswith("o3") or self.MODEL.startswith("o4"))
+            test_payload = {"messages": [{"role": "user", "content": "ping"}]}
+            if is_o_series:
+                test_payload["max_completion_tokens"] = 1
+            else:
+                test_payload["max_tokens"] = 1
+                test_payload["temperature"] = 0.0
             req = urllib2.Request(
                 self._append_api_version(chat_url),
-                data=json.dumps({
-                    "messages": [{"role": "user", "content": "ping"}],
-                    "max_tokens": 1,
-                    "temperature": 0.0
-                }).encode("utf-8"),
+                data=json.dumps(test_payload).encode("utf-8"),
                 headers={
                     "Content-Type": "application/json",
                     "api-key": self.API_KEY
@@ -2894,13 +2897,18 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck, ITab, IContextMe
 
         chat_url = self._append_api_version(chat_url)
 
+        # o-series models (o1, o3, o4-mini) use max_completion_tokens and don't accept temperature
+        is_o_series = self.MODEL and (self.MODEL.startswith("o1") or self.MODEL.startswith("o3") or self.MODEL.startswith("o4"))
+        payload = {"messages": [{"role": "user", "content": prompt}]}
+        if is_o_series:
+            payload["max_completion_tokens"] = self.MAX_TOKENS
+        else:
+            payload["max_tokens"] = self.MAX_TOKENS
+            payload["temperature"] = 0.0
+
         req = urllib2.Request(
             chat_url,
-            data=json.dumps({
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": self.MAX_TOKENS,
-                "temperature": 0.0
-            }).encode("utf-8"),
+            data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
                 "api-key": self.API_KEY

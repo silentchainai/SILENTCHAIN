@@ -64,3 +64,5 @@ ehthumbs.db
 
 # Logs
 *.log
+
+temp/

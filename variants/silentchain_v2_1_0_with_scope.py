@@ -2405,9 +2405,15 @@ function showTab(idx, name) {{
         if "api-version=" not in chat_url:
             sep = '&' if '?' in chat_url else '?'
             chat_url += sep + "api-version=" + (self.AZURE_API_VERSION or "2024-06-01")
+        is_o_series = self.MODEL and (self.MODEL.startswith("o1") or self.MODEL.startswith("o3") or self.MODEL.startswith("o4"))
+        payload = {"messages": [{"role": "user", "content": prompt}]}
+        if is_o_series:
+            payload["max_completion_tokens"] = self.MAX_TOKENS
+        else:
+            payload["max_tokens"] = self.MAX_TOKENS
+            payload["temperature"] = 0.0
         req = urllib2.Request(chat_url,
-            data=json.dumps({"messages":[{"role":"user","content":prompt}],
-                             "max_tokens":self.MAX_TOKENS,"temperature":0.0}).encode("utf-8"),
+            data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type":"application/json","api-key":self.API_KEY})
         data = json.loads(urllib2.urlopen(req, timeout=self.AI_REQUEST_TIMEOUT).read())
         return data["choices"][0]["message"]["content"]
