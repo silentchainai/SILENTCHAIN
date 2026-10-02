@@ -67,13 +67,36 @@ public final class CsvExporter {
         }
     }
 
-    private static String escape(String field) {
+    /**
+     * Characters that make a spreadsheet treat a cell as a formula rather than
+     * text when they appear first. {@code \t} and {@code \r} are included because
+     * Excel strips them and then re-evaluates the remainder, so "\t=cmd|'..'!A1"
+     * still executes.
+     */
+    private static boolean isFormulaTrigger(char c) {
+        return c == '=' || c == '+' || c == '-' || c == '@' || c == '\t' || c == '\r';
+    }
+
+    /**
+     * Neutralize CSV/spreadsheet formula injection. Finding titles come from the
+     * LLM and URLs come from the target, so either can start with a formula
+     * trigger; a leading apostrophe forces the cell to be read as text.
+     */
+    static String neutralizeFormula(String field) {
+        if (field.isEmpty() || !isFormulaTrigger(field.charAt(0))) {
+            return field;
+        }
+        return "'" + field;
+    }
+
+    static String escape(String field) {
         if (field == null) {
             return "";
         }
-        boolean needsQuoting = field.contains(",") || field.contains("\"")
-                || field.contains("\n") || field.contains("\r");
-        String escaped = field.replace("\"", "\"\"");
+        String safe = neutralizeFormula(field);
+        boolean needsQuoting = safe.contains(",") || safe.contains("\"")
+                || safe.contains("\n") || safe.contains("\r");
+        String escaped = safe.replace("\"", "\"\"");
         return needsQuoting ? "\"" + escaped + "\"" : escaped;
     }
 }

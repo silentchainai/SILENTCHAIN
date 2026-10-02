@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- CSV formula injection in the findings export (CWE-1236). `CsvExporter.escape()` applied RFC-4180 quoting but did not neutralize spreadsheet formula triggers, so a finding title (LLM-derived) or URL (target-controlled) beginning with `=`, `+`, `-`, `@`, tab or CR was written as a live formula and evaluated when the analyst opened the file in Excel/LibreOffice/Sheets. Such fields are now prefixed with an apostrophe, placed inside the RFC-4180 quotes where quoting also applies. Covered by `CsvExporterTest`.
+
+---
+
+## [1.3.1] - 2026-07-13
+
+### Summary
+- Fix local Ollama zero-findings on small models: /api/chat + JSON-schema structured output (findings-object) + num_ctx/think:false/repeat_penalty; ResponseParser truncated-JSON salvage; Ollama structured-output + num_ctx settings
+
 ### Fixed
 - Local Ollama models (e.g. `deepseek-coder-v2`, `qwen3`) returning zero findings from Analyze. Root cause: `OllamaProvider` posted to `/api/generate` with a raw `[SYSTEM]/[USER]` prompt blob and `format:"json"`, so small models satisfied the JSON grammar with a bare `{}` (silently parsed to zero findings); reasoning models also burned the request timeout emitting a `<think>` block or looped a string field until the JSON truncated.
 
@@ -17,13 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New Ollama tuning knobs in Settings → AI Provider (Ollama only): **Ollama structured output** (`schema`/`json`/`off`) and **Ollama context (num_ctx)**, both persisted.
 - System prompt + prompt builder now request the `{"findings":[...]}` object contract (the parser already accepted both shapes).
 - `ResponseParser` gained a truncated-JSON salvage path that recovers finding objects completed before any cut-off.
-
----
-
-## [1.3.1] - 2026-07-13
-
-### Summary
-- Fix local Ollama zero-findings on small models: /api/chat + JSON-schema structured output (findings-object) + num_ctx/think:false/repeat_penalty; ResponseParser truncated-JSON salvage; Ollama structured-output + num_ctx settings
 
 ---
 
@@ -55,20 +58,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.0] - 2026-03-29
 
 ### Added
-- **Azure Foundry AI Provider** — First-class Azure OpenAI support with deployment-based routing, configurable API version, and real connection testing (deployments list + chat endpoint fallback)
-- **Fixed Thread Pool (5 workers)** — Replaced unbounded `Thread` spawning with Java `Executors.newFixedThreadPool(5)` to prevent resource exhaustion under heavy traffic; per-host semaphores limit to 2 concurrent requests per target
-- **Persistent Vulnerability Cache** — Deduplication cache saved to `~/.silentchain_vuln_cache.json` with async write-behind; survives Burp restarts; tracks `hit_count` and `last_seen` per finding
-- **CSV Export** — "Export CSV" button exports all findings to timestamped CSV file (`SILENTCHAIN_Findings_YYYYMMDD_HHMMSS.csv`) with proper field escaping
-- **Config Versioning & Migration** — `config_version` field with automatic migration logic; v1→v2 adds Azure Foundry fields and fixes legacy theme values
-- **Start/Stop Scanning Toggle** — Master on/off button in control panel; stops both passive scanning and HTTP listener processing when deactivated
-- **Runtime Status Panel** — Live display of current AI provider, model, scanning state, and cache entry count; updates every refresh cycle
-- **Cache Hit Stats** — New "Cache Hits" counter in statistics panel tracking reused findings from persistent cache
+- **Azure Foundry AI Provider** - First-class Azure OpenAI support with deployment-based routing, configurable API version, and real connection testing (deployments list + chat endpoint fallback)
+- **Fixed Thread Pool (5 workers)** - Replaced unbounded `Thread` spawning with Java `Executors.newFixedThreadPool(5)` to prevent resource exhaustion under heavy traffic; per-host semaphores limit to 2 concurrent requests per target
+- **Persistent Vulnerability Cache** - Deduplication cache saved to `~/.silentchain_vuln_cache.json` with async write-behind; survives Burp restarts; tracks `hit_count` and `last_seen` per finding
+- **CSV Export** - "Export CSV" button exports all findings to timestamped CSV file (`SILENTCHAIN_Findings_YYYYMMDD_HHMMSS.csv`) with proper field escaping
+- **Config Versioning & Migration** - `config_version` field with automatic migration logic; v1→v2 adds Azure Foundry fields and fixes legacy theme values
+- **Start/Stop Scanning Toggle** - Master on/off button in control panel; stops both passive scanning and HTTP listener processing when deactivated
+- **Runtime Status Panel** - Live display of current AI provider, model, scanning state, and cache entry count; updates every refresh cycle
+- **Cache Hit Stats** - New "Cache Hits" counter in statistics panel tracking reused findings from persistent cache
 
 ### Changed
-- **MD5 → SHA-256** — All request signature and finding deduplication hashes migrated from MD5 to SHA-256 (truncated to 32 chars) for improved collision resistance
-- **Real Claude Connection Test** — Claude provider now performs actual API call (`POST /messages` with ping) instead of hardcoded success; reports HTTP 401 for invalid keys
-- **Reduced Rate Limit Delay** — Default `min_delay` reduced from 4.0s to 2.0s since the fixed thread pool now manages concurrency
-- **Global Semaphore** — Increased from 1 to 5 to match thread pool size
+- **MD5 → SHA-256** - All request signature and finding deduplication hashes migrated from MD5 to SHA-256 (truncated to 32 chars) for improved collision resistance
+- **Real Claude Connection Test** - Claude provider now performs actual API call (`POST /messages` with ping) instead of hardcoded success; reports HTTP 401 for invalid keys
+- **Reduced Rate Limit Delay** - Default `min_delay` reduced from 4.0s to 2.0s since the fixed thread pool now manages concurrency
+- **Global Semaphore** - Increased from 1 to 5 to match thread pool size
 
 ### Technical Details
 - Thread pool: `java.util.concurrent.Executors.newFixedThreadPool(5)` with `_make_runnable()` Java Runnable wrapper
@@ -82,19 +85,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.4] - 2026-03-09
 
 ### Added
-- **Data Privacy Layer (DataSanitizer)** — Bidirectional sanitizer that redacts sensitive data before sending prompts to cloud AI providers and restores original values in responses
+- **Data Privacy Layer (DataSanitizer)** - Bidirectional sanitizer that redacts sensitive data before sending prompts to cloud AI providers and restores original values in responses
   - Automatically redacts: API keys (OpenAI `sk-`, GitHub `ghp_`, AWS `AKIA`, GitLab `glpat-`, Slack `xoxb-`), Bearer/Basic auth tokens, credentials (password/secret/token fields), session cookies (session, csrf, jwt, auth_token, etc.), email addresses, IP addresses, hostnames, and filesystem paths
   - Allowlisted values bypass redaction: `localhost`, `127.0.0.1`, `example.com`, and other safe defaults
   - Bidirectional mapping: redacted placeholders (e.g., `[REDACTED_KEY_1]`) in AI responses are transparently restored to original values
   - Enabled by default (`sanitize_enabled: true` in config); can be disabled for local-only providers like Ollama
   - Verbose mode logs redaction summary (e.g., "Redacted 2 KEY(s), 3 EMAIL(s) before sending to OpenAI")
-- **Claude Code CLI as AI Provider** — Added "ClaudeCode" option in provider dropdown
+- **Claude Code CLI as AI Provider** - Added "ClaudeCode" option in provider dropdown
   - Invokes `claude` CLI binary for analysis via subprocess
   - Useful for leveraging Claude's full capabilities without API key management
 
 ### Technical Details
 - DataSanitizer uses regex-based pattern matching with 8 categories (KEY, AUTH, CRED, COOKIE, EMAIL, IP, HOST, PATH)
-- Placeholder format: `[REDACTED_{CATEGORY}_{N}]` — deterministic per session, restored via reverse mapping
+- Placeholder format: `[REDACTED_{CATEGORY}_{N}]` - deterministic per session, restored via reverse mapping
 - Claude Code provider calls `claude -p` with analysis prompt, parses JSON output
 
 ---
@@ -139,8 +142,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### User Impact
 - **Config file stays a few hundred bytes** instead of growing to 145MB+
-- **Extension loads instantly** — no more startup hang from parsing a massive JSON file
-- **Settings dialog opens instantly** — no more UI freeze from loading a corrupted API key
+- **Extension loads instantly** - no more startup hang from parsing a massive JSON file
+- **Settings dialog opens instantly** - no more UI freeze from loading a corrupted API key
 - **Note:** Users with a corrupted config file should delete `~/.silentchain_config.json` and re-enter their settings
 
 ---
