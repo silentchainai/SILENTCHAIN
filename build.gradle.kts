@@ -29,9 +29,17 @@ dependencies {
 
 tasks.named<Test>("test") {
     useJUnitPlatform()
+    // UI classes are constructed in tests without a display.
+    systemProperty("java.awt.headless", "true")
 }
 
+// Only the shadow (fat) jar is a usable extension: the plain jar would lack org.json.
+// Disabling it means `./gradlew build` produces exactly one jar in build/libs/.
 tasks.named<Jar>("jar") {
+    enabled = false
+}
+
+tasks.shadowJar {
     manifest {
         attributes(
             "Implementation-Title" to "SILENTCHAIN Community Edition",
@@ -39,9 +47,6 @@ tasks.named<Jar>("jar") {
             "Implementation-Vendor" to "Sn1persecurity LLC"
         )
     }
-}
-
-tasks.shadowJar {
     archiveClassifier.set("")
     archiveBaseName.set("silentchain-community-edition")
     minimize()

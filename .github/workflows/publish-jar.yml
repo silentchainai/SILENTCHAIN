@@ -31,13 +31,14 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.11.1'   # repo has no Gradle wrapper; pin a Gradle 8.x
 
-      - name: Build fat-jar
-        run: gradle shadowJar --no-daemon --console=plain
+      - name: Test + build fat-jar
+        run: ./gradlew test shadowJar --no-daemon --console=plain
 
       - name: Resolve version + verify build
         run: |

@@ -43,6 +43,8 @@ _cache/
 # Java / Gradle / Burp Suite artifacts
 *.class
 *.jar
+# The Gradle wrapper jar must be committed (PortSwigger builds BApps from source via ./gradlew)
+!gradle/wrapper/gradle-wrapper.jar
 *.war
 .gradle/
 build/
