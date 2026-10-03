@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.4.0] - 2026-10-02
+
+### Summary
+- BApp review round 2 (#244): PassiveScanCheck, native settings panel, AI gate on every request, structural credential redaction, clean unload
+
 BApp Store review follow-up (extension-portal issue #244).
 
 ### Added
