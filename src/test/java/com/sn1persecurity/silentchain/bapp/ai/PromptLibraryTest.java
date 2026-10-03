@@ -122,4 +122,29 @@ class PromptLibraryTest {
         assertEquals("abc", PromptLibrary.capMarked("abc", 5));
         assertEquals("abcde ...[truncated 3 chars]", PromptLibrary.capMarked("abcdefgh", 5));
     }
+
+    /** A secret inside an ordinary parameter (GraphQL query, JSON in a form field) is not re-printed. */
+    @Test
+    void credentialsNestedInsideParameterValuesAreRedacted() {
+        HttpRequest request = DeepStub.of(HttpRequest.class, Map.of(
+                "url", a -> "https://app.example.org/graphql?page=1&user=bob",
+                "headerValue", a -> "application/json",
+                "parameters", a -> List.of(
+                        param("query", "mutation{login(user:\"bob\", password:\"GQL-LEAK\")}", HttpParameterType.JSON),
+                        param("payload", "{\"password\":\"FORM-JSON-LEAK\"}", HttpParameterType.BODY),
+                        param("page", "1", HttpParameterType.URL),
+                        param("user", "bob", HttpParameterType.URL)),
+                "bodyToString", a -> "{\"query\":\"mutation{login(user:\\\"bob\\\", password:\\\"GQL-LEAK\\\")}\","
+                        + "\"auth\":{\"role\":\"1\"}}"));
+        HttpRequestResponse rr = DeepStub.of(HttpRequestResponse.class, Map.of(
+                "request", a -> request, "response", a -> null));
+
+        String prompt = PromptLibrary.buildAnalysisPrompt(rr, new DataSanitizer(false));
+
+        assertFalse(prompt.contains("GQL-LEAK"), prompt);
+        assertFalse(prompt.contains("FORM-JSON-LEAK"), prompt);
+        // URL parameters equal to a value inside a redacted body container stay visible.
+        assertTrue(prompt.contains("\"value\": \"1\""), prompt);
+        assertTrue(prompt.contains("\"value\": \"bob\""), prompt);
+    }
 }

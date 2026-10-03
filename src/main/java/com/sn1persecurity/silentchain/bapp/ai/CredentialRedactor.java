@@ -2,6 +2,7 @@ package com.sn1persecurity.silentchain.bapp.ai;
 
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -68,20 +69,16 @@ public final class CredentialRedactor {
     private static final Pattern URL_PAIR = Pattern.compile(
             "([?&#])([^=&;#?/\\s<>\"']{1,100})=([^&#\\s<>\"']*)");
 
-    /** Multipart part header naming a field. */
-    private static final Pattern MULTIPART_NAME = Pattern.compile(
-            "(?i)content-disposition:[^\\r\\n]*?\\bname=\"([^\"]{1,100})\"[^\\r\\n]*");
-
-    /** XML element with only text content: <ns:name attr>text</ns:name>. */
-    private static final Pattern XML_ELEMENT = Pattern.compile(
-            "<((?:[\\w.-]{1,50}:)?([\\w.-]{1,100}))\\b[^<>]{0,500}>([^<]*)</\\1\\s*>");
-
-    /** Attribute: name="value" or name='value'. */
+    /** Attribute: name="value", name='value' or name=value (unquoted). */
     private static final Pattern ATTRIBUTE = Pattern.compile(
-            "([\\w:.-]{1,100})\\s*=\\s*(\"[^\"]*\"|'[^']*')");
+            "([\\w:.-]{1,100})\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s\"'=<>`]+)");
 
-    /** An HTML input or meta tag (possibly cut off at the end of the body). */
-    private static final Pattern INPUT_OR_META = Pattern.compile("(?i)<(?:input|meta)\\b[^>]{0,2000}>?");
+    /** Form-control tags whose value may carry a credential named by name/id/property/http-equiv. */
+    private static final Set<String> FORM_CONTROL_TAGS = Set.of(
+            "input", "meta", "button", "textarea", "option", "select", "param");
+
+    /** Longest start tag examined (attributes beyond this are not parsed). */
+    private static final int MAX_TAG_CHARS = 8_192;
 
     /** name: "value" / name = 'value' / name:\"value\" outside JSON keys (JS, GraphQL, stringified JSON). */
     private static final Pattern NAMED_ASSIGNMENT = Pattern.compile(
@@ -213,24 +210,24 @@ public final class CredentialRedactor {
             return text;
         }
         String ct = contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
-        if (ct.contains("x-www-form-urlencoded") || looksLikeForm(text)) {
+        if (ct.isBlank() || ct.contains("x-www-form-urlencoded") || ct.contains("text/plain")) {
             text = redactPairs(text, redactedValues);
         }
         if (ct.contains("multipart/") || text.toLowerCase(Locale.ROOT).contains("content-disposition")) {
             text = redactMultipart(text, redactedValues);
         }
         text = redactJsonMembers(text, redactedValues);
-        if (ct.contains("xml") || text.stripLeading().startsWith("<")) {
-            text = redactXml(text);
+        if (text.indexOf('<') >= 0) {
+            text = redactMarkup(text);
         }
         return redactNamedAssignments(text);
     }
 
     /**
      * A response body with credential values replaced: JSON members (also JSON
-     * embedded in HTML/JS), HTML input/meta values whose name/id marks a
-     * credential (CSRF tokens, session ids), XML, JS assignments, and
-     * form-encoded token responses.
+     * embedded in HTML/JS), HTML form controls whose name/id marks a credential
+     * (CSRF tokens, session ids), credential-named XML elements and attributes,
+     * JS assignments, and form-encoded / line-based token responses.
      */
     public static String redactResponseBody(String body, String contentType) {
         String text = limit(body);
@@ -238,17 +235,25 @@ public final class CredentialRedactor {
             return text;
         }
         String ct = contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
-        if (ct.contains("x-www-form-urlencoded") || looksLikeForm(text)) {
+        if (ct.isBlank() || ct.contains("x-www-form-urlencoded") || ct.contains("text/plain")) {
             text = redactPairs(text, null);
         }
         text = redactJsonMembers(text, null);
         if (text.indexOf('<') >= 0) {
-            text = redactInputsAndMeta(text);
-            if (ct.contains("xml") || text.stripLeading().startsWith("<?xml")) {
-                text = redactXml(text);
-            }
+            text = redactMarkup(text);
         }
         return redactNamedAssignments(text);
+    }
+
+    /**
+     * A single parameter value with any credentials nested inside it removed
+     * (a JSON / form / GraphQL / URL string held in an ordinary parameter).
+     */
+    public static String redactInsideValue(String value) {
+        if (value == null || value.isEmpty()) {
+            return value == null ? "" : value;
+        }
+        return redactUrl(redactRequestBody(value, null, null));
     }
 
     // ---- helpers --------------------------------------------------------------
@@ -290,89 +295,140 @@ public final class CredentialRedactor {
         return out.toString();
     }
 
-    /** A single line of name=value pairs joined by '&' (trailing CR/LF allowed). */
-    static boolean looksLikeForm(String text) {
-        String t = text.stripTrailing();
-        if (t.isEmpty() || t.indexOf('=') <= 0) {
-            return false;
-        }
-        for (int i = 0; i < t.length(); i++) {
-            char c = t.charAt(i);
-            if (Character.isWhitespace(c) || c == '<' || c == '>' || c == '{' || c == '"') {
-                return false;
+    /**
+     * name=value segments separated by '&', CR or LF (form-urlencoded, text/plain
+     * form posts, line-based token responses). A segment is only treated as a
+     * pair when the text before '=' is a plausible name (no whitespace, quotes,
+     * braces or angle brackets); its value runs to the end of the segment.
+     */
+    private static String redactPairs(String text, Set<String> redactedValues) {
+        int n = text.length();
+        StringBuilder out = new StringBuilder(n);
+        int i = 0;
+        while (i <= n) {
+            int end = i;
+            while (end < n) {
+                char c = text.charAt(end);
+                if (c == '&' || c == '\r' || c == '\n') {
+                    break;
+                }
+                end++;
             }
+            String segment = text.substring(i, end);
+            int eq = segment.indexOf('=');
+            if (eq > 0 && eq <= 100 && isPlausibleName(segment, eq) && isCredentialName(segment.substring(0, eq))) {
+                String value = segment.substring(eq + 1);
+                remember(redactedValues, value);
+                out.append(segment, 0, eq + 1).append(mask(value));
+            } else {
+                out.append(segment);
+            }
+            if (end >= n) {
+                break;
+            }
+            out.append(text.charAt(end));
+            i = end + 1;
         }
-        for (String part : t.split("&")) {
-            if (part.indexOf('=') <= 0) {
+        return out.toString();
+    }
+
+    private static boolean isPlausibleName(String segment, int eq) {
+        for (int k = 0; k < eq; k++) {
+            char c = segment.charAt(k);
+            if (Character.isWhitespace(c) || c == '"' || c == '\'' || c == '<' || c == '>' || c == '{' || c == '}') {
                 return false;
             }
         }
         return true;
     }
 
-    /** "a=1&password=x" -> "a=1&password=[REDACTED]" (names compared URL-decoded, value to the end of the pair). */
-    private static String redactPairs(String pairs, Set<String> redactedValues) {
-        StringBuilder out = new StringBuilder(pairs.length());
-        String[] parts = pairs.split("&", -1);
-        for (int i = 0; i < parts.length; i++) {
-            if (i > 0) {
-                out.append('&');
-            }
-            String part = parts[i];
-            int eq = part.indexOf('=');
-            if (eq > 0 && isCredentialName(part.substring(0, eq))) {
-                String value = part.substring(eq + 1);
-                String trailing = value.substring(value.stripTrailing().length());
-                remember(redactedValues, value.stripTrailing());
-                out.append(part, 0, eq + 1).append(mask(value.stripTrailing())).append(trailing);
-            } else {
-                out.append(part);
-            }
-        }
-        return out.toString();
-    }
-
-    /** Credential-named multipart fields: the whole part body up to the next boundary line. */
+    /**
+     * Credential-named multipart fields: the whole part body up to the next
+     * boundary line. Linear: each header line is examined once.
+     */
     private static String redactMultipart(String body, Set<String> redactedValues) {
-        Matcher m = MULTIPART_NAME.matcher(body);
-        StringBuilder out = new StringBuilder(body.length());
+        String lower = body.toLowerCase(Locale.ROOT);
+        int n = body.length();
+        StringBuilder out = new StringBuilder(n);
         int copied = 0;
-        while (m.find()) {
-            if (!isCredentialName(m.group(1)) || m.end() < copied) {
+        int pos = 0;
+        while (pos < n) {
+            int cd = lower.indexOf("content-disposition:", pos);
+            if (cd < 0) {
+                break;
+            }
+            int lineEnd = lineEnd(body, cd);
+            pos = lineEnd;
+            int nameAt = findNameAttribute(lower, cd + 20, lineEnd);
+            if (nameAt < 0 || cd < copied) {
                 continue;
             }
-            int headersEnd = indexOfBlankLine(body, m.end());
-            if (headersEnd < 0) {
+            int q1 = nameAt + 6;
+            int q2 = body.indexOf('"', q1);
+            if (q2 < 0 || q2 > lineEnd || q2 - q1 > 100 || !isCredentialName(body.substring(q1, q2))) {
                 continue;
             }
-            int valueStart = headersEnd;
+            int valueStart = indexOfBlankLine(body, lineEnd);
+            if (valueStart < 0) {
+                break;             // no part body anywhere after this point
+            }
             int valueEnd = indexOfBoundary(body, valueStart);
             String value = body.substring(valueStart, valueEnd);
             remember(redactedValues, value);
             out.append(body, copied, valueStart).append(mask(value));
             copied = valueEnd;
+            pos = valueEnd;
         }
-        out.append(body, copied, body.length());
+        out.append(body, copied, n);
         return out.toString();
     }
 
-    private static int indexOfBlankLine(String s, int from) {
-        int crlf = s.indexOf("\r\n\r\n", from);
-        int lf = s.indexOf("\n\n", from);
-        if (crlf >= 0 && (lf < 0 || crlf <= lf)) {
-            return crlf + 4;
+    private static int lineEnd(String s, int from) {
+        int i = from;
+        while (i < s.length() && s.charAt(i) != '\r' && s.charAt(i) != '\n') {
+            i++;
         }
-        return lf >= 0 ? lf + 2 : -1;
+        return i;
     }
 
-    private static int indexOfBoundary(String s, int from) {
-        int crlf = s.indexOf("\r\n--", from);
-        int lf = s.indexOf("\n--", from);
-        int end = crlf >= 0 ? crlf : lf;
-        if (lf >= 0 && (crlf < 0 || lf < crlf)) {
-            end = lf;
+    /** Index of name=" (not filename=") within [from, to), or -1. */
+    private static int findNameAttribute(String lower, int from, int to) {
+        for (int k = from; k + 6 <= to; k++) {
+            if (lower.startsWith("name=\"", k) && (k == 0 || !isWordChar(lower.charAt(k - 1)))) {
+                return k;
+            }
         }
-        return end >= 0 ? end : s.length();
+        return -1;
+    }
+
+    private static boolean isWordChar(char c) {
+        return Character.isLetterOrDigit(c) || c == '_' || c == '-';
+    }
+
+    /** Index just after the first blank line at or after {@code from}, or -1. */
+    private static int indexOfBlankLine(String s, int from) {
+        int n = s.length();
+        for (int k = from; k < n; k++) {
+            if (s.charAt(k) != '\n') {
+                continue;
+            }
+            if (k + 1 < n && s.charAt(k + 1) == '\n') {
+                return k + 2;
+            }
+            if (k + 2 < n && s.charAt(k + 1) == '\r' && s.charAt(k + 2) == '\n') {
+                return k + 3;
+            }
+        }
+        return -1;
+    }
+
+    /** Start of the line break before the next "--" boundary line, or the end of the text. */
+    private static int indexOfBoundary(String s, int from) {
+        int lf = s.indexOf("\n--", from);
+        if (lf < 0) {
+            return s.length();
+        }
+        return lf > from && s.charAt(lf - 1) == '\r' ? lf - 1 : lf;
     }
 
     /**
@@ -397,17 +453,23 @@ public final class CredentialRedactor {
                 out.append(text, i, n);
                 break;
             }
-            out.append(text, i, close + 1);
             int colon = skipWhitespace(text, close + 1);
-            if (colon < n && text.charAt(colon) == ':' && close - i - 1 <= 200
-                    && isCredentialName(unescapeJson(text.substring(i + 1, close)))) {
+            boolean isKey = colon < n && text.charAt(colon) == ':';
+            if (isKey && close - i - 1 <= 200 && isCredentialName(unescapeJson(text.substring(i + 1, close)))) {
+                out.append(text, i, close + 1);
                 int valueStart = skipWhitespace(text, colon + 1);
                 int valueEnd = endOfJsonValue(text, valueStart);
                 out.append(text, close + 1, valueStart);
                 out.append(maskJsonValue(text.substring(valueStart, valueEnd), redactedValues));
                 i = valueEnd;
-            } else {
+            } else if (isKey) {
+                out.append(text, i, close + 1);
                 i = close + 1;
+            } else {
+                // Not a key: this closing quote may really open the next key (a stray or
+                // escaped quote earlier in non-JSON text must not shift the pairing).
+                out.append(text, i, close);
+                i = close;
             }
         }
         return out.toString();
@@ -569,80 +631,160 @@ public final class CredentialRedactor {
         return out.toString();
     }
 
-    /** XML elements and attributes whose (local) name is credential-like. */
-    private static String redactXml(String text) {
-        Matcher m = XML_ELEMENT.matcher(text);
-        StringBuilder out = new StringBuilder(text.length());
-        while (m.find()) {
-            String replacement = isCredentialName(m.group(2)) && !m.group(3).isBlank()
-                    ? m.group().substring(0, m.start(3) - m.start()) + REDACTED + m.group().substring(m.end(3) - m.start())
-                    : m.group();
-            m.appendReplacement(out, Matcher.quoteReplacement(replacement));
-        }
-        m.appendTail(out);
-        return redactCredentialAttributes(out.toString());
-    }
+    /**
+     * Markup (XML, SOAP, HTML): credential-named elements lose their content
+     * (text, CDATA, children), form controls whose name/id/property marks a
+     * credential lose their value/content (and a textarea its text), and
+     * credential-named attributes lose their value. Linear: each start tag is
+     * parsed only up to the next '<'.
+     */
+    static String redactMarkup(String text) {
+        int n = text.length();
+        StringBuilder out = new StringBuilder(n);
+        Set<String> unclosed = new HashSet<>();
+        int copied = 0;
+        int i = text.indexOf('<');
+        while (i >= 0 && i < n) {
+            int nameStart = i + 1;
+            int nameEnd = nameStart;
+            while (nameEnd < n && nameEnd - nameStart < 150 && isTagNameChar(text.charAt(nameEnd))) {
+                nameEnd++;
+            }
+            if (nameEnd == nameStart || !Character.isLetter(text.charAt(nameStart))) {
+                i = text.indexOf('<', i + 1);
+                continue;
+            }
+            int nextLt = text.indexOf('<', nameEnd);
+            int limit = nextLt < 0 ? n : Math.min(nextLt, nameEnd + MAX_TAG_CHARS);
+            int tagEnd = endOfStartTag(text, nameEnd, limit);
+            String qname = text.substring(nameStart, nameEnd);
+            String local = qname.substring(qname.lastIndexOf(':') + 1).toLowerCase(Locale.ROOT);
+            String tag = text.substring(i, tagEnd);
+            String newTag = redactTagAttributes(tag, local);
 
-    private static String redactCredentialAttributes(String text) {
-        Matcher m = ATTRIBUTE.matcher(text);
-        StringBuilder out = new StringBuilder(text.length());
-        while (m.find()) {
-            String name = m.group(1);
-            int colon = name.lastIndexOf(':');
-            String local = colon >= 0 ? name.substring(colon + 1) : name;
-            String replacement = isCredentialName(local) ? quotedMask(m.group(), m.group(2)) : m.group();
-            m.appendReplacement(out, Matcher.quoteReplacement(replacement));
+            int contentEnd = -1;   // when set, [tagEnd, contentEnd) is replaced by [REDACTED]
+            boolean selfClosing = tag.endsWith("/>");
+            if (!selfClosing && tag.endsWith(">")
+                    && ((local.equals("textarea") && hasCredentialIdentity(tag)) || isCredentialName(local))) {
+                contentEnd = elementContentEnd(text, qname, tagEnd, unclosed);
+            }
+
+            out.append(text, copied, i).append(newTag);
+            copied = tagEnd;
+            if (contentEnd > tagEnd) {
+                String content = text.substring(tagEnd, contentEnd);
+                if (!content.isBlank() && !content.replace("<![CDATA[]]>", "").isBlank()) {
+                    out.append(REDACTED);
+                    copied = contentEnd;
+                }
+            }
+            i = text.indexOf('<', Math.max(tagEnd, copied));
         }
-        m.appendTail(out);
+        out.append(text, copied, n);
         return out.toString();
     }
 
-    /** <input name="csrf_token" value="..."> / <meta name="csrf-token" content="..."> and credential-named attributes. */
-    private static String redactInputsAndMeta(String text) {
-        Matcher tag = INPUT_OR_META.matcher(text);
-        StringBuilder out = new StringBuilder(text.length());
-        while (tag.find()) {
-            String t = tag.group();
-            boolean credential = false;
-            Matcher a = ATTRIBUTE.matcher(t);
-            while (a.find()) {
-                String attr = a.group(1).toLowerCase(Locale.ROOT);
-                if ((attr.equals("name") || attr.equals("id") || attr.equals("property") || attr.equals("http-equiv"))
-                        && isCredentialName(unquote(a.group(2)))) {
-                    credential = true;
-                    break;
-                }
+    private static boolean isTagNameChar(char c) {
+        return Character.isLetterOrDigit(c) || c == ':' || c == '.' || c == '-' || c == '_';
+    }
+
+    /**
+     * Index after the '>' closing the start tag (quote-aware), or {@code limit}
+     * if it is cut off. Never looks at or beyond {@code limit} (the next '<').
+     */
+    private static int endOfStartTag(String s, int from, int limit) {
+        int firstGt = -1;
+        char quote = 0;
+        for (int k = from; k < limit; k++) {
+            char c = s.charAt(k);
+            if (c == '>' && firstGt < 0) {
+                firstGt = k;
             }
-            String replacement = t;
-            if (credential) {
-                Matcher v = ATTRIBUTE.matcher(t);
-                StringBuilder tagOut = new StringBuilder(t.length());
-                while (v.find()) {
-                    String attr = v.group(1).toLowerCase(Locale.ROOT);
-                    String rep = attr.equals("value") || attr.equals("content") ? quotedMask(v.group(), v.group(2)) : v.group();
-                    v.appendReplacement(tagOut, Matcher.quoteReplacement(rep));
+            if (quote != 0) {
+                if (c == quote) {
+                    quote = 0;
                 }
-                v.appendTail(tagOut);
-                replacement = tagOut.toString();
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == '>') {
+                return k + 1;
             }
-            tag.appendReplacement(out, Matcher.quoteReplacement(replacement));
         }
-        tag.appendTail(out);
+        // Cut off, or a quote never closed: fall back to the first raw '>' (if any).
+        return quote != 0 && firstGt >= 0 ? firstGt + 1 : limit;
+    }
+
+    /** Close-tag searches per body; bounds the work for many distinct unclosed credential elements. */
+    private static final int MAX_CLOSE_TAG_SEARCHES = 256;
+
+    /** End of an element's content: its close tag, or (no close tag) the next markup, CDATA included. */
+    private static int elementContentEnd(String s, String qname, int from, Set<String> unclosed) {
+        if (!unclosed.contains(qname) && unclosed.size() < MAX_CLOSE_TAG_SEARCHES) {
+            String close = "</" + qname;
+            int k = from;
+            while ((k = s.indexOf(close, k)) >= 0) {
+                int after = k + close.length();
+                if (after >= s.length() || s.charAt(after) == '>' || Character.isWhitespace(s.charAt(after))) {
+                    return k;
+                }
+                k = after;
+            }
+            unclosed.add(qname);   // no close tag after here, so none after any later position either
+        }
+        int next = s.indexOf('<', from);
+        if (next >= 0 && s.startsWith("<![CDATA[", next)) {
+            int cdataEnd = s.indexOf("]]>", next);
+            return cdataEnd < 0 ? s.length() : cdataEnd + 3;
+        }
+        return next < 0 ? s.length() : next;
+    }
+
+    /** True if the tag's name/id/property/http-equiv attribute names a credential. */
+    private static boolean hasCredentialIdentity(String tag) {
+        Matcher a = ATTRIBUTE.matcher(tag);
+        while (a.find()) {
+            String attr = a.group(1).toLowerCase(Locale.ROOT);
+            if ((attr.equals("name") || attr.equals("id") || attr.equals("property") || attr.equals("http-equiv"))
+                    && isCredentialName(unquote(a.group(2)))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Mask credential-named attributes, and value/content of a credential form control. */
+    private static String redactTagAttributes(String tag, String localName) {
+        boolean credentialControl = FORM_CONTROL_TAGS.contains(localName) && hasCredentialIdentity(tag);
+        Matcher a = ATTRIBUTE.matcher(tag);
+        StringBuilder out = new StringBuilder(tag.length());
+        while (a.find()) {
+            String name = a.group(1);
+            String local = name.substring(name.lastIndexOf(':') + 1);
+            String lower = local.toLowerCase(Locale.ROOT);
+            boolean maskIt = isCredentialName(local)
+                    || (credentialControl && (lower.equals("value") || lower.equals("content")));
+            a.appendReplacement(out, Matcher.quoteReplacement(maskIt ? quotedMask(a.group(), a.group(2)) : a.group()));
+        }
+        a.appendTail(out);
         return out.toString();
     }
 
-    /** name="secret" -> name="[REDACTED]" (empty values kept). */
-    private static String quotedMask(String whole, String quotedValue) {
-        String inner = unquote(quotedValue);
+    /** name="secret" -> name="[REDACTED]" (empty values kept; unquoted values stay unquoted). */
+    private static String quotedMask(String whole, String value) {
+        String inner = unquote(value);
         if (inner.isBlank()) {
             return whole;
         }
-        char q = quotedValue.charAt(0);
-        return whole.substring(0, whole.length() - quotedValue.length()) + q + REDACTED + q;
+        String prefix = whole.substring(0, whole.length() - value.length());
+        char q = value.charAt(0);
+        return q == '"' || q == '\'' ? prefix + q + REDACTED + q : prefix + REDACTED;
     }
 
-    private static String unquote(String quoted) {
-        return quoted.length() >= 2 ? quoted.substring(1, quoted.length() - 1) : quoted;
+    private static String unquote(String value) {
+        if (value.length() >= 2 && (value.charAt(0) == '"' || value.charAt(0) == '\'')) {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
     }
 
     /** JS / GraphQL / stringified-JSON assignments with an unquoted credential name. */

@@ -209,4 +209,67 @@ class CredentialRedactorTest {
         assertNull(failure.get());
         assertNoLeak(second.get(), "PW");
     }
+
+    /** One stray or escaped quote earlier in the body must not switch redaction off for the rest. */
+    @Test
+    void strayQuotesDoNotDesynchroniseTheScanner() {
+        String boot = "<script>window.__BOOT__ = {\"csrf_token\":\"CSRF-LEAK\",\"session\":{\"id\":\"SESS-LEAK\"}};</script>";
+        for (String prefix : new String[]{
+                "<input type=\"hidden\" id=\"logdir\" value=\"C:\\logs\\\">",
+                "<p>The 5\" display</p>",
+                "<script>s.replace(/\"/g,'&quot;'); var q='\"';</script>"}) {
+            assertNoLeak(CredentialRedactor.redactResponseBody(prefix + boot, "text/html"), "CSRF-LEAK", "SESS-LEAK");
+        }
+        assertNoLeak(req("{\"note\":\"path C:\\\",\"password\":\"Hunter2!xyz\"}"), "Hunter2!xyz");
+    }
+
+    @Test
+    void textPlainAndLineBasedPairs() {
+        assertNoLeak(CredentialRedactor.redactRequestBody("user=bob\r\npassword=V20 with spaces\r\n", "text/plain", null), "V20");
+        assertNoLeak(CredentialRedactor.redactResponseBody("SID=S1\nLSID=S2\nAuth=A3\n", "text/plain"), "A3");
+        assertNoLeak(CredentialRedactor.redactRequestBody("user=bob&password={\"a\":1} x", null, null), "{\"a\"");
+    }
+
+    @Test
+    void htmlFormControlsWhateverTheAttributeOrder() {
+        String html = "<input data-x=\"a>b\" name=\"csrf_token\" value=\"T1\">"
+                + "<input value=\"T2\" name=\"authenticity_token\">"
+                + "<input name=csrf_token value=T3>"
+                + "<input " + "data-pad=\"x\" ".repeat(300) + "name=\"_csrf\" value=\"T4\">"
+                + "<textarea name=\"api_key\">T5</textarea>"
+                + "<button name=\"token\" value=\"T6\">Go</button>"
+                + "<input name=\"q\" value=\"shoes\">";
+        String out = CredentialRedactor.redactResponseBody(html, "text/html");
+        assertNoLeak(out, "T1", "T2", "T3", "T4", "T5", "T6");
+        assertTrue(out.contains("shoes"));
+    }
+
+    @Test
+    void xmlCredentialContentIncludingCdataAndChildren() {
+        String xml = "<Envelope><Password><![CDATA[V21&<x>]]></Password>"
+                + "<auth><user>bob</user><secret>V22</secret></auth>"
+                + "<Token" + " a=\"x\"".repeat(200) + ">V23</Token><name>visible</name></Envelope>";
+        String out = CredentialRedactor.redactRequestBody(xml, "application/xml", null);
+        assertNoLeak(out, "V21", "V22", "V23");
+        assertTrue(out.contains("visible"));
+    }
+
+    /** Linear time on hostile bodies (the multipart regex was quadratic: about 1 s for 64 KB). */
+    @Test
+    void hostileBodiesStayFast() {
+        String[] hostile = {
+                "content-disposition: ".repeat(4_000),
+                "<input '".repeat(9_000),
+                "<tokenA".repeat(9_000),
+                "\"a\":".repeat(13_000),
+                "\"x\\".repeat(16_000),
+                "<a ".repeat(20_000)};
+        for (String body : hostile) {
+            long start = System.nanoTime();
+            CredentialRedactor.redactRequestBody(body, "multipart/form-data", null);
+            CredentialRedactor.redactResponseBody(body, "text/html");
+            long millis = (System.nanoTime() - start) / 1_000_000;
+            assertTrue(millis < 500, "took " + millis + " ms on " + body.substring(0, 20));
+        }
+    }
 }

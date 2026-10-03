@@ -24,6 +24,7 @@ public class AiService {
         return dispatcher.isConfigured();
     }
 
+    /** @throws AiNotSentException if nothing could be sent (see {@link AiDispatcher#analyze}) */
     public Optional<String> analyze(String userPrompt) {
         return dispatcher.analyze(PromptLibrary.systemPrompt(), userPrompt);
     }

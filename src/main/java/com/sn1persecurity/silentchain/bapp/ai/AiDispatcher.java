@@ -67,11 +67,19 @@ public class AiDispatcher {
         return current().isConfigured();
     }
 
+    /**
+     * @throws AiNotSentException if nothing can be sent (AI disabled for the
+     *         extension, or the selected provider is not configured)
+     */
     public Optional<String> analyze(String systemPrompt, String userPrompt) {
         if (!aiGate.isEnabled()) {
-            return Optional.empty();
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);
         }
-        return current().analyze(systemPrompt, userPrompt);
+        LlmProvider provider = current();
+        if (!provider.isConfigured()) {
+            throw new AiNotSentException(provider.displayName() + " is not configured.");
+        }
+        return provider.analyze(systemPrompt, userPrompt);
     }
 
     public List<String> listModels(ProviderId which) {

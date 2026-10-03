@@ -97,10 +97,14 @@ public class PromptLibrary {
                 if (paramsSample.length() >= MAX_PARAMS_SAMPLE) {
                     break;
                 }
-                String value = redactedValues.contains(p.value())
-                        ? CredentialRedactor.REDACTED
-                        : CredentialRedactor.redactParameterValue(
-                                p.name(), p.value(), p.type() == HttpParameterType.COOKIE);
+                String value;
+                if (p.type() == HttpParameterType.COOKIE || CredentialRedactor.isCredentialName(p.name())) {
+                    value = CredentialRedactor.redactParameterValue(p.name(), p.value(), true);
+                } else if (p.type() != HttpParameterType.URL && redactedValues.contains(p.value())) {
+                    value = CredentialRedactor.REDACTED;     // a value the body redactor removed (e.g. nested JSON)
+                } else {
+                    value = CredentialRedactor.redactInsideValue(p.value());   // JSON / GraphQL / form inside a value
+                }
                 JSONObject pj = new JSONObject();
                 pj.put("name", p.name());
                 pj.put("value", capMarked(value, MAX_PARAM_VALUE_CHARS));

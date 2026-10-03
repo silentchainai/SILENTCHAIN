@@ -7,6 +7,7 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.scanner.audit.issues.AuditIssue;
 
 import com.sn1persecurity.silentchain.bapp.ai.AiGate;
+import com.sn1persecurity.silentchain.bapp.ai.AiNotSentException;
 import com.sn1persecurity.silentchain.bapp.ai.AiService;
 import com.sn1persecurity.silentchain.bapp.ai.ParsedFinding;
 import com.sn1persecurity.silentchain.bapp.ai.PromptLibrary;
@@ -256,9 +257,18 @@ public class AnalysisOrchestrator {
             }
             DataSanitizer sanitizer = new DataSanitizer(settings.sanitizerEnabled());
             String prompt = PromptLibrary.buildAnalysisPrompt(resolved, sanitizer);
-            counters.incAnalyzed();
+            Optional<String> result;
             reachedAi = true;
-            Optional<String> result = aiService.analyze(prompt);
+            try {
+                result = aiService.analyze(prompt);
+            } catch (AiNotSentException e) {
+                // AI was disabled or the provider unconfigured while the prompt was built.
+                reachedAi = false;
+                task.finish(TaskStatus.SKIPPED);
+                scanState.debug("SILENTCHAIN [" + job.trigger() + "]: skipped, " + e.getMessage());
+                return;
+            }
+            counters.incAnalyzed();
 
             // The provider has been paid: only an explicit cancel or unload discards
             // the result (Stop Scanning only stops work that has not started).

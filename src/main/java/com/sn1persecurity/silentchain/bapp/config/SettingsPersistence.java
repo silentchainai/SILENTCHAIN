@@ -98,6 +98,8 @@ public class SettingsPersistence {
         }
         if (!anyPerProvider) {
             migrateLegacyProviderConfig(into);
+        } else {
+            adoptNewerLegacyValues(into);
         }
 
         s = prefs.getString(K_THEME);             if (s != null) into.setTheme(safeTheme(s));
@@ -130,6 +132,33 @@ public class SettingsPersistence {
             }
         }
         into.setConfig(owner, new ProviderConfig(url, owner == ProviderId.OLLAMA ? "" : key, model));
+    }
+
+    /**
+     * 1.4 mirrors the selected third-party provider into the legacy single keys
+     * on every save, so if they now differ from that provider's slot, 1.3.x ran
+     * and saved since (downgrade then re-upgrade): the legacy values are newer.
+     */
+    private void adoptNewerLegacyValues(Settings into) {
+        ProviderId selected = into.provider();
+        if (selected == ProviderId.BURP_AI) {
+            return;
+        }
+        String url = prefs.getString(K_LEGACY_API_URL);
+        String key = prefs.getString(K_LEGACY_API_KEY);
+        String model = prefs.getString(K_LEGACY_MODEL);
+        if (url == null && key == null && model == null) {
+            return;
+        }
+        ProviderConfig legacy = new ProviderConfig(url, selected == ProviderId.OLLAMA ? "" : key, model);
+        if (legacy.equals(into.config(selected))) {
+            return;
+        }
+        ProviderId owner = inferLegacyOwner(url, key, model);
+        if (owner != null && owner != selected) {
+            return;    // 1.3.x kept another vendor's key in the shared slot; do not move it here
+        }
+        into.setConfig(selected, legacy);
     }
 
     /** The third-party provider the legacy URL / key / model identify, or null. */

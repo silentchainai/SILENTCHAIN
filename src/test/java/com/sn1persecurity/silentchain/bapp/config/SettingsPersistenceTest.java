@@ -68,17 +68,45 @@ class SettingsPersistenceTest {
         assertEquals("claude-key", store.get("String:silentchain.apiKey"));
     }
 
+    /** In 1.4 the selected provider's slot and the mirrored legacy keys agree: nothing changes. */
     @Test
-    void perProviderKeysWinOverLegacyKeys() {
+    void consistentPerProviderAndLegacyKeysAreLeftAlone() {
         Map<String, Object> store = new HashMap<>();
         store.put("String:silentchain.provider", "OPENAI");
-        store.put("String:silentchain.apiKey", "stale-legacy");
+        store.put("String:silentchain.apiKey", "current");
         store.put("String:silentchain.provider.OPENAI.apiKey", "current");
 
         Settings s = new Settings();
         new SettingsPersistence(preferences(store)).load(s);
 
         assertEquals("current", s.config(ProviderId.OPENAI).apiKey());
+    }
+
+    /** 1.4 -> 1.3.x (key rotated there) -> 1.4: the newer 1.3.x value wins. */
+    @Test
+    void valuesSavedBy13xAfterADowngradeAreAdopted() {
+        Map<String, Object> store = new HashMap<>();
+        store.put("String:silentchain.provider", "OPENAI");
+        store.put("String:silentchain.apiKey", "rotated-in-1.3");
+        store.put("String:silentchain.provider.OPENAI.apiKey", "old-revoked");
+
+        Settings s = new Settings();
+        new SettingsPersistence(preferences(store)).load(s);
+
+        assertEquals("rotated-in-1.3", s.config(ProviderId.OPENAI).apiKey());
+    }
+
+    @Test
+    void anotherVendorsKeyLeftInTheSharedSlotIsNotMoved() {
+        Map<String, Object> store = new HashMap<>();
+        store.put("String:silentchain.provider", "OPENAI");
+        store.put("String:silentchain.apiKey", "sk-ant-claude-key");
+        store.put("String:silentchain.provider.OPENAI.apiKey", "openai-key");
+
+        Settings s = new Settings();
+        new SettingsPersistence(preferences(store)).load(s);
+
+        assertEquals("openai-key", s.config(ProviderId.OPENAI).apiKey());
     }
 
     /** 1.3.x saved the shared values even with Burp AI selected: give them to the provider they identify. */

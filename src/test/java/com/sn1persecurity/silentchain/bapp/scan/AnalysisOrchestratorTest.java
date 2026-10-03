@@ -1,5 +1,6 @@
 package com.sn1persecurity.silentchain.bapp.scan;
 
+import com.sn1persecurity.silentchain.bapp.ai.AiNotSentException;
 import com.sn1persecurity.silentchain.bapp.state.ScanTask;
 import com.sn1persecurity.silentchain.bapp.state.TaskStatus;
 import com.sn1persecurity.silentchain.bapp.util.ThreadPool;
@@ -308,5 +309,19 @@ class AnalysisOrchestratorTest {
         assertEquals(0, f.analyzerCalls.get());
         assertEquals(TaskStatus.SKIPPED, onlyTask().status());
         assertEquals(ThreadPool.ANALYSIS_QUEUE, f.orchestrator.availableJobSlots());
+    }
+
+    /** AI switched off (or provider unconfigured) while the prompt was being built: nothing was sent. */
+    @Test
+    void notSentAtTheLastMomentIsSkippedNotCounted() {
+        f.analyzer = p -> { throw new AiNotSentException("AI disabled"); };
+
+        queuePassive(true);
+
+        assertEquals(TaskStatus.SKIPPED, onlyTask().status());
+        assertEquals(0, f.counters.analyzed());
+        assertEquals(0, f.counters.errors());
+        assertEquals(1, abandoned.get());
+        assertTrue(f.allPassiveSlotsFree());
     }
 }

@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -82,7 +83,7 @@ class AiGatingTest {
         AiDispatcher dispatcher = dispatcherFor(configured(provider));
 
         assertFalse(dispatcher.isAvailable());
-        assertTrue(dispatcher.analyze("system", "user").isEmpty());
+        assertThrows(AiNotSentException.class, () -> dispatcher.analyze("system", "user"));
         assertTrue(dispatcher.listModels(provider).isEmpty());
         TestResult viaDispatcher = dispatcher.testConnection(provider);
         assertFalse(viaDispatcher.success());
@@ -143,7 +144,7 @@ class AiGatingTest {
 
         AiDispatcher dispatcher = dispatcherFor(settings);
         assertFalse(dispatcher.isConfigured(), "Gemini has no key of its own");
-        assertTrue(dispatcher.analyze("system", "user").isEmpty());
+        assertThrows(AiNotSentException.class, () -> dispatcher.analyze("system", "user"));
         assertEquals(0, sendRequests.get());
     }
 
