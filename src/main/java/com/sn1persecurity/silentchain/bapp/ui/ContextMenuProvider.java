@@ -16,6 +16,7 @@ import javax.swing.JMenuItem;
 import java.awt.Component;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
 
 public class ContextMenuProvider implements ContextMenuItemsProvider {
 
@@ -64,8 +65,12 @@ public class ContextMenuProvider implements ContextMenuItemsProvider {
         return out;
     }
 
-    /** Runs on the EDT (menu action): only checks + queueing, never network I/O. */
-    private void dispatch(List<HttpRequestResponse> messages, Component invoker) {
+    /**
+     * Runs on the EDT (menu action): only checks + queueing, never network I/O.
+     * Like passive analysis, right-click analysis is limited to Burp's target
+     * scope (PortSwigger's AI guidance: send only in-scope traffic).
+     */
+    private void dispatch(List<HttpRequestResponse> selection, Component invoker) {
         if (!aiGate.isEnabled()) {
             scanState.info("SILENTCHAIN: " + AiGate.DISABLED_MESSAGE);
             return;
@@ -73,6 +78,15 @@ public class ContextMenuProvider implements ContextMenuItemsProvider {
         if (!aiService.isConfigured()) {
             scanState.info("SILENTCHAIN: the selected AI provider is not configured. "
                     + "Open SILENTCHAIN's settings (Settings button on the SILENTCHAIN tab).");
+            return;
+        }
+        List<HttpRequestResponse> messages = inScope(selection, url -> api.scope().isInScope(url));
+        int outOfScope = selection.size() - messages.size();
+        if (outOfScope > 0) {
+            scanState.info("SILENTCHAIN [context-menu]: " + outOfScope + " selected item(s) are outside Burp's "
+                    + "target scope and were not analyzed (add the target under Target > Scope).");
+        }
+        if (messages.isEmpty()) {
             return;
         }
         if (!DataConsentDialog.ensureConsent(api, persistence, invoker)) {
@@ -93,5 +107,19 @@ public class ContextMenuProvider implements ContextMenuItemsProvider {
                     + " message(s) not queued because the analysis queue is full. Try again when "
                     + "current tasks finish.");
         }
+    }
+
+    /** The items whose request URL is in scope (null or URL-less items are dropped). */
+    static List<HttpRequestResponse> inScope(List<HttpRequestResponse> items, Predicate<String> isInScope) {
+        List<HttpRequestResponse> out = new ArrayList<>();
+        for (HttpRequestResponse rr : items) {
+            if (rr != null && rr.request() != null) {
+                String url = rr.request().url();
+                if (url != null && !url.isBlank() && isInScope.test(url)) {
+                    out.add(rr);
+                }
+            }
+        }
+        return out;
     }
 }

@@ -87,6 +87,11 @@ public class SilentchainSettingsPanel implements SettingsPanel {
         reload();
     }
 
+    /** Reflect a passive on/off change made on the main tab. */
+    public void syncPassive() {
+        advancedTab.syncPassive();
+    }
+
     /** Refill both tabs from the live settings. */
     public void reload() {
         aiTab.load();

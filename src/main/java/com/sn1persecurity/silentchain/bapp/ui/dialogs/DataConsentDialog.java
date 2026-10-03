@@ -48,16 +48,19 @@ public final class DataConsentDialog {
             "GDPR, or similar regimes to a cloud AI provider without an appropriate " +
             "data-processing agreement. Prefer a local provider (Ollama) for such data.</p>" +
 
-            "<p><b>Sanitization:</b> Cookie, Set-Cookie, Authorization and API-key " +
-            "header values are always replaced with [REDACTED]. When the sanitizer is " +
-            "enabled (default), SILENTCHAIN also redacts common secrets and PII in the " +
-            "rest of the exchange (API keys, tokens, emails) and neutralizes " +
-            "prompt-injection patterns before content is sent. Sanitization is not a " +
-            "guarantee; review your scope and data classification first.</p>" +
+            "<p><b>Credentials:</b> cookie values, Authorization and API-key/token " +
+            "header values, and parameters or JSON fields named like credentials " +
+            "(password, token, api_key, session...) are always replaced with " +
+            "[REDACTED] before anything is sent. When the sanitizer is enabled " +
+            "(default), SILENTCHAIN also redacts common secrets and PII in the rest of " +
+            "the exchange (API keys, emails, hosts) and neutralizes prompt-injection " +
+            "patterns. Redaction is not a guarantee; review your scope and data " +
+            "classification first.</p>" +
 
-            "<p>Passive analysis covers in-scope targets only and is bounded by a " +
-            "per-host rate limit, URL de-duplication and a response size cap, which " +
-            "you can adjust in SILENTCHAIN's settings.</p>" +
+            "<p>Only in-scope targets (Target &gt; Scope) are analyzed, both " +
+            "automatically and from the right-click menu. Passive analysis is also " +
+            "bounded by a per-host rate limit, URL de-duplication and a response size " +
+            "cap, which you can adjust in SILENTCHAIN's settings.</p>" +
 
             "<p><b>Do you acknowledge the above and want to enable AI analysis?</b></p>" +
             "</body></html>";

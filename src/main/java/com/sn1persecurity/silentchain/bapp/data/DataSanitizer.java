@@ -31,7 +31,8 @@ public class DataSanitizer {
                     "|ghp_[A-Za-z0-9]{36,}" +
                     "|AKIA[A-Z0-9]{16}" +
                     "|glpat-[A-Za-z0-9_\\-]{20,}" +
-                    "|xoxb-[A-Za-z0-9\\-]{20,})")),
+                    "|xoxb-[A-Za-z0-9\\-]{20,}" +
+                    "|AIza[0-9A-Za-z_\\-]{35})")),
             new SanitizePattern("AUTH", Pattern.compile(
                     "(?:Bearer\\s+[A-Za-z0-9_\\-.]{10,}" +
                     "|Basic\\s+[A-Za-z0-9+/=]{8,})")),

@@ -9,6 +9,7 @@ import com.sn1persecurity.silentchain.bapp.ai.providers.TestResult;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
 import com.sn1persecurity.silentchain.bapp.config.Settings.ProviderConfig;
 import com.sn1persecurity.silentchain.bapp.config.SettingsPersistence;
+import com.sn1persecurity.silentchain.bapp.ui.main.renderers.PlainTextListCellRenderer;
 import com.sn1persecurity.silentchain.bapp.util.ThreadPool;
 
 import javax.swing.DefaultComboBoxModel;
@@ -66,6 +67,9 @@ public class AiProviderTab extends JPanel {
     private ProviderId shownProvider = ProviderId.BURP_AI;
     /** True while fields are being filled programmatically, so listeners do not commit. */
     private boolean loading;
+    /** A Refresh / Test request is running (EDT-confined). */
+    private boolean refreshInFlight;
+    private boolean testInFlight;
 
     public AiProviderTab(Settings settings, SettingsPersistence persistence, AiDispatcher dispatcher,
                          AiGate aiGate, ThreadPool threadPool, Logging logging, Runnable onChanged) {
@@ -79,6 +83,8 @@ public class AiProviderTab extends JPanel {
 
         setLayout(new GridBagLayout());
         modelCombo.setEditable(true);
+        modelCombo.setRenderer(new PlainTextListCellRenderer());
+        providerCombo.setRenderer(new PlainTextListCellRenderer());
         statusLabel.putClientProperty("html.disable", Boolean.TRUE);
 
         for (ProviderId p : ProviderId.values()) {
@@ -235,7 +241,8 @@ public class AiProviderTab extends JPanel {
         apiUrl.setEnabled(!burpAi);
         apiKey.setEnabled(!burpAi && !ollama);
         modelCombo.setEnabled(!burpAi);
-        refreshBtn.setEnabled(!burpAi && !azure);
+        refreshBtn.setEnabled(!refreshInFlight && refreshSupported(p));
+        testBtn.setEnabled(!testInFlight);
         maxTokens.setEnabled(!burpAi);
         azureApiVersion.setEnabled(azure);
         ollamaStructured.setEnabled(ollama);   // local-model output-shape tuning
@@ -248,11 +255,19 @@ public class AiProviderTab extends JPanel {
         }
     }
 
+    private static boolean refreshSupported(ProviderId p) {
+        return p != ProviderId.BURP_AI && p != ProviderId.AZURE_FOUNDRY;
+    }
+
     private void onRefreshModels() {
+        if (refreshInFlight) {
+            return;
+        }
         commitProviderFields();
         commitGeneral();
         ProviderId p = shownProvider;
         statusLabel.setText("Loading models...");
+        refreshInFlight = true;
         refreshBtn.setEnabled(false);
         boolean queued = threadPool.submitInteractive("model refresh", () -> {
             List<String> models = List.of();
@@ -275,25 +290,31 @@ public class AiProviderTab extends JPanel {
                     message = result.size() + " models loaded.";
                 }
                 SwingUtilities.invokeLater(() -> {
+                    refreshInFlight = false;
                     if (p == shownProvider) {
                         setModels(result);
+                        statusLabel.setText(message);
                     }
-                    refreshBtn.setEnabled(true);
-                    statusLabel.setText(message);
+                    refreshBtn.setEnabled(refreshSupported(selectedProvider()));
                 });
             }
         });
         if (!queued) {
-            refreshBtn.setEnabled(true);
+            refreshInFlight = false;
+            refreshBtn.setEnabled(refreshSupported(selectedProvider()));
             statusLabel.setText("Busy; try again in a moment.");
         }
     }
 
     private void onTestConnection() {
+        if (testInFlight) {
+            return;
+        }
         commitProviderFields();
         commitGeneral();
         ProviderId p = shownProvider;
         statusLabel.setText("Testing " + p.displayName() + "...");
+        testInFlight = true;
         testBtn.setEnabled(false);
         boolean queued = threadPool.submitInteractive("test connection", () -> {
             TestResult result = TestResult.fail("Test did not complete.");
@@ -305,12 +326,17 @@ public class AiProviderTab extends JPanel {
             } finally {
                 TestResult shown = result;
                 SwingUtilities.invokeLater(() -> {
+                    testInFlight = false;
                     testBtn.setEnabled(true);
-                    statusLabel.setText((shown.success() ? "OK: " : "FAILED: ") + shown.message());
+                    if (p == shownProvider) {
+                        statusLabel.setText(p.displayName() + (shown.success() ? " OK: " : " FAILED: ")
+                                + shown.message());
+                    }
                 });
             }
         });
         if (!queued) {
+            testInFlight = false;
             testBtn.setEnabled(true);
             statusLabel.setText("Busy; try again in a moment.");
         }

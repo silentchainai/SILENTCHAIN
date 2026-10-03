@@ -146,4 +146,16 @@ class AiGatingTest {
         assertTrue(dispatcher.analyze("system", "user").isEmpty());
         assertEquals(0, sendRequests.get());
     }
+
+    /** Provider-supplied model names are shown in Swing; anything that is not a plain name is dropped. */
+    @Test
+    void implausibleModelNamesFromTheProviderAreDropped() {
+        aiEnabled.set(true);
+        Settings s = configured(ProviderId.AZURE_FOUNDRY);   // Azure lists its configured deployment name
+        assertEquals(java.util.List.of("some-model"), dispatcherFor(s).listModels(ProviderId.AZURE_FOUNDRY));
+
+        s.setConfig(ProviderId.AZURE_FOUNDRY, new ProviderConfig("https://x.openai.azure.com", "k",
+                "<html><img src='http://evil/x'>"));
+        assertTrue(dispatcherFor(s).listModels(ProviderId.AZURE_FOUNDRY).isEmpty());
+    }
 }

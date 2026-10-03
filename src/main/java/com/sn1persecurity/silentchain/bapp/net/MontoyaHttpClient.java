@@ -72,6 +72,9 @@ public class MontoyaHttpClient {
             HttpRequestResponse rr = api.http().sendRequest(request, options);
             HttpResponse resp = rr.response();
             if (resp == null) {
+                api.logging().logToError("SILENTCHAIN: no response from the AI provider within "
+                        + settings.requestTimeoutSeconds() + " s (timed out or connection failed). "
+                        + "For slow local models raise 'Third-party AI timeout (s)' in SILENTCHAIN's settings.");
                 return new HttpReply(0, "", Collections.emptyMap());
             }
             String bodyStr = resp.bodyToString();

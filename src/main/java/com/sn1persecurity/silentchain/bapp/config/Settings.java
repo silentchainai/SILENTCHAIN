@@ -55,7 +55,9 @@ public class Settings {
     private final Map<ProviderId, ProviderConfig> providerConfigs = new ConcurrentHashMap<>();
     private volatile int maxTokens = 2048;
     private volatile String azureApiVersion = "2024-06-01";
-    private volatile int requestTimeoutSeconds = 60;
+    /** Matches Burp's own default response timeout; older versions defaulted to an unused 60. */
+    public static final int DEFAULT_REQUEST_TIMEOUT_SECONDS = 120;
+    private volatile int requestTimeoutSeconds = DEFAULT_REQUEST_TIMEOUT_SECONDS;
 
     // ---- Ollama (local model) tuning ---------------------------------------
 

@@ -58,7 +58,16 @@ public class AnalysisOrchestrator {
     static final String TRIGGER_PASSIVE = "passive";
     static final String TRIGGER_ON_DEMAND = "context-menu";
 
-    private record Job(HttpRequestResponse rr, String trigger, boolean passive, boolean allowFetch, ScanTask task) {}
+    /**
+     * One analysis. {@code onAbandoned} (passive jobs: hand back the ScanGate
+     * reservation) runs if the job ends without reaching the AI provider.
+     */
+    private record Job(HttpRequestResponse rr, String trigger, boolean passive, boolean allowFetch,
+                       ScanTask task, Runnable onAbandoned) {
+        Job withExchange(HttpRequestResponse other) {
+            return new Job(other, trigger, passive, allowFetch, task, onAbandoned);
+        }
+    }
 
     private final MontoyaApi api;
     private final AiService aiService;
@@ -72,6 +81,12 @@ public class AnalysisOrchestrator {
     private final Lifecycle lifecycle;
 
     private final Semaphore passiveSlots = new Semaphore(PASSIVE_BACKLOG);
+    /**
+     * Every job, queued + running + parked, holds one of these. Sized to the
+     * analysis queue, so admission fails up front (and the user is told) instead
+     * of the executor rejecting work later, e.g. when parked work is resumed.
+     */
+    private final Semaphore jobSlots = new Semaphore(ThreadPool.ANALYSIS_QUEUE);
     private final Queue<Job> parkedJobs = new ConcurrentLinkedQueue<>();
 
     public AnalysisOrchestrator(MontoyaApi api,
@@ -100,11 +115,19 @@ public class AnalysisOrchestrator {
 
     /** Reserve a passive backlog slot. Non-blocking; false means the backlog is full. */
     public boolean tryAdmitPassive() {
-        return passiveSlots.tryAcquire();
+        if (!passiveSlots.tryAcquire()) {
+            return false;
+        }
+        if (!jobSlots.tryAcquire()) {
+            passiveSlots.release();
+            return false;
+        }
+        return true;
     }
 
     /** Give back a slot from {@link #tryAdmitPassive} that was not handed to {@link #analyzePassive}. */
     public void releasePassiveAdmission() {
+        jobSlots.release();
         passiveSlots.release();
     }
 
@@ -113,22 +136,26 @@ public class AnalysisOrchestrator {
      * {@link #tryAdmitPassive}; ownership of the slot passes to the job.
      * The exchange must already have its response: this path never fetches one.
      *
+     * @param onAbandoned run if the job ends without reaching the AI provider
      * @return false if the analysis queue was full (the slot is released).
      */
-    public boolean analyzePassive(HttpRequestResponse rr) {
+    public boolean analyzePassive(HttpRequestResponse rr, Runnable onAbandoned) {
         return submitOrDrop(new Job(rr, TRIGGER_PASSIVE, true, false,
-                taskRegistry.newTask(TRIGGER_PASSIVE, safeUrl(rr))));
+                taskRegistry.newTask(TRIGGER_PASSIVE, safeUrl(rr)), onAbandoned));
     }
 
     /**
      * Queue a user-initiated analysis. If the exchange has no response, the
      * request is sent once (from the worker, never the EDT) to capture one.
      *
-     * @return false if the analysis queue was full.
+     * @return false if the analysis queue was full (nothing was queued).
      */
     public boolean analyzeOnDemand(HttpRequestResponse rr) {
+        if (!jobSlots.tryAcquire()) {
+            return false;
+        }
         return submitOrDrop(new Job(rr, TRIGGER_ON_DEMAND, false, true,
-                taskRegistry.newTask(TRIGGER_ON_DEMAND, safeUrl(rr))));
+                taskRegistry.newTask(TRIGGER_ON_DEMAND, safeUrl(rr)), null));
     }
 
     /** Cancel every task, including work parked while paused. Returns the number cancelled. */
@@ -136,18 +163,23 @@ public class AnalysisOrchestrator {
         int cancelled = taskRegistry.cancelAll();
         Job job;
         while ((job = parkedJobs.poll()) != null) {
-            if (job.passive()) {
-                passiveSlots.release();
-            }
+            abandon(job);
+            releaseSlots(job);
         }
         return cancelled;
     }
 
     /** Re-queue work parked while tasks were paused (wired to ScanState's resume hook). */
     public void resumeParked() {
+        int dropped = 0;
         Job job;
         while ((job = parkedJobs.poll()) != null) {
-            submitOrDrop(job);
+            if (!submitOrDrop(job)) {
+                dropped++;
+            }
+        }
+        if (dropped > 0) {
+            scanState.info("SILENTCHAIN: " + dropped + " paused task(s) could not be re-queued and were cancelled.");
         }
     }
 
@@ -156,10 +188,27 @@ public class AnalysisOrchestrator {
             return true;
         }
         job.task().finish(TaskStatus.CANCELLED);
+        abandon(job);
+        releaseSlots(job);
+        return false;
+    }
+
+    private void releaseSlots(Job job) {
+        jobSlots.release();
         if (job.passive()) {
             passiveSlots.release();
         }
-        return false;
+    }
+
+    private void abandon(Job job) {
+        Runnable hook = job.onAbandoned();
+        if (hook != null) {
+            try {
+                hook.run();
+            } catch (Throwable t) {
+                api.logging().logToError("SILENTCHAIN: failed to release a passive reservation", t);
+            }
+        }
     }
 
     // ---- Worker -------------------------------------------------------------
@@ -167,10 +216,13 @@ public class AnalysisOrchestrator {
     private void runJob(Job job) {
         ScanTask task = job.task();
         boolean parked = false;
+        boolean reachedAi = false;
         try {
             if (scanState.isPaused() && task.park()) {
+                // Parked work may wait indefinitely: keep the exchange on disk, not the heap.
+                Job toPark = job.passive() ? job : job.withExchange(job.rr().copyToTempFile());
+                parkedJobs.add(toPark);
                 parked = true;
-                parkedJobs.add(job);
                 if (!scanState.isPaused()) {
                     resumeParked();    // resumed while this job was being parked
                 }
@@ -179,9 +231,7 @@ public class AnalysisOrchestrator {
             if (!task.tryStart()) {
                 return;                // cancelled while queued
             }
-            counters.incAnalyzed();
-
-            if (stopRequested(job) || !aiEnabled(job)) {
+            if (stopRequested(job) || !aiEnabled(job) || !stillInScope(job)) {
                 return;
             }
             HttpRequestResponse resolved = job.allowFetch() ? ensureResponse(job.rr(), job.trigger()) : job.rr();
@@ -191,9 +241,13 @@ public class AnalysisOrchestrator {
             }
             DataSanitizer sanitizer = new DataSanitizer(settings.sanitizerEnabled());
             String prompt = PromptLibrary.buildAnalysisPrompt(resolved, sanitizer);
+            counters.incAnalyzed();
+            reachedAi = true;
             Optional<String> result = aiService.analyze(prompt);
 
-            if (stopRequested(job)) {
+            // The provider has been paid: only an explicit cancel or unload discards
+            // the result (Stop Scanning only stops work that has not started).
+            if (cancelledOrUnloading(job)) {
                 return;
             }
             handleResult(resolved, sanitizer, job, result);
@@ -207,15 +261,16 @@ public class AnalysisOrchestrator {
         } finally {
             if (!parked) {
                 task.finish(TaskStatus.ERROR);   // no-op when a terminal status was already set
-                if (job.passive()) {
-                    passiveSlots.release();
+                if (!reachedAi) {
+                    abandon(job);
                 }
+                releaseSlots(job);
             }
         }
     }
 
-    /** True (and the task is ended) if the job was cancelled or must not continue. */
-    private boolean stopRequested(Job job) {
+    /** True (and the task is ended) if the job was cancelled or the extension is unloading. */
+    private boolean cancelledOrUnloading(Job job) {
         ScanTask task = job.task();
         if (task.status().isTerminal()) {
             return true;                        // cancelled by the user
@@ -224,10 +279,33 @@ public class AnalysisOrchestrator {
             task.finish(TaskStatus.CANCELLED);
             return true;
         }
-        if (job.passive() && !settings.passiveEnabled()) {
-            task.finish(TaskStatus.CANCELLED);  // Stop Scanning cancels queued passive work
+        return false;
+    }
+
+    /** As {@link #cancelledOrUnloading}, and Stop Scanning cancels passive work that has not started. */
+    private boolean stopRequested(Job job) {
+        if (cancelledOrUnloading(job)) {
             return true;
         }
+        if (job.passive() && !settings.passiveEnabled()) {
+            job.task().finish(TaskStatus.CANCELLED);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Burp's scope can change while a job waits in the queue or parked; nothing
+     * out of scope is sent to the AI or fetched from the target.
+     */
+    private boolean stillInScope(Job job) {
+        HttpRequest req = job.rr().request();
+        String url = req != null ? req.url() : null;
+        if (url != null && !url.isBlank() && api.scope().isInScope(url)) {
+            return true;
+        }
+        job.task().finish(TaskStatus.SKIPPED);
+        scanState.debug("SILENTCHAIN [" + job.trigger() + "]: skipped, not in Burp's target scope: " + url);
         return false;
     }
 
@@ -252,8 +330,8 @@ public class AnalysisOrchestrator {
             return rr;
         }
         HttpRequest req = rr.request();
-        if (req == null) {
-            return rr;
+        if (req == null || !api.scope().isInScope(req.url())) {
+            return rr;                         // never replay an out-of-scope request
         }
         try {
             HttpRequestResponse sent = api.http().sendRequest(req,

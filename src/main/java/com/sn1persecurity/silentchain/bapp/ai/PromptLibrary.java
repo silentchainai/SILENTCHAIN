@@ -2,6 +2,7 @@ package com.sn1persecurity.silentchain.bapp.ai;
 
 import burp.api.montoya.http.message.HttpHeader;
 import burp.api.montoya.http.message.HttpRequestResponse;
+import burp.api.montoya.http.message.params.HttpParameterType;
 import burp.api.montoya.http.message.params.ParsedHttpParameter;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
@@ -29,18 +30,12 @@ public class PromptLibrary {
     private static final int MAX_REQUEST_BODY_CHARS = 2_000;
     private static final int MAX_RESPONSE_BODY_CHARS = 3_000;
     private static final int MAX_HEADER_VALUE_CHARS = 300;
+    private static final int MAX_POLICY_HEADER_CHARS = 2_000;
 
-    static final String REDACTED = "[REDACTED]";
-
-    /**
-     * Headers whose values are credentials. Their values are always replaced,
-     * whatever the sanitizer toggle says: PortSwigger's AI guidance is to keep
-     * authentication tokens and session cookies out of AI requests, and
-     * value-pattern redaction alone misses cookies such as JSESSIONID.
-     */
-    private static final Set<String> CREDENTIAL_HEADERS = Set.of(
-            "authorization", "proxy-authorization", "x-api-key", "api-key", "x-auth-token",
-            "x-access-token", "x-csrf-token", "x-xsrf-token", "x-amz-security-token");
+    /** Security-policy headers the model must see in full to judge them (CSP etc.). */
+    private static final Set<String> POLICY_HEADERS = Set.of(
+            "content-security-policy", "content-security-policy-report-only",
+            "permissions-policy", "strict-transport-security");
 
     private static final String SYSTEM_PROMPT = loadSystemPrompt();
 
@@ -64,7 +59,9 @@ public class PromptLibrary {
         HttpRequest req = rr.request();
         HttpResponse resp = rr.response();
 
-        data.put("url", req != null ? req.url() : "");
+        // Credentials are removed by name before anything else (see CredentialRedactor);
+        // the optional sanitizer then works on what is left.
+        data.put("url", req != null ? CredentialRedactor.redactUrl(req.url()) : "");
         data.put("method", req != null ? req.method() : "");
         data.put("status", resp != null ? (int) resp.statusCode() : 0);
         data.put("mime_type", resp != null ? String.valueOf(resp.statedMimeType()) : "");
@@ -81,7 +78,8 @@ public class PromptLibrary {
                 }
                 JSONObject pj = new JSONObject();
                 pj.put("name", p.name());
-                pj.put("value", cap(p.value(), MAX_PARAM_VALUE_CHARS));
+                pj.put("value", cap(CredentialRedactor.redactParameterValue(
+                        p.name(), p.value(), p.type() == HttpParameterType.COOKIE), MAX_PARAM_VALUE_CHARS));
                 pj.put("type", String.valueOf(p.type()));
                 paramsSample.put(pj);
             }
@@ -91,7 +89,8 @@ public class PromptLibrary {
 
         // --- request ---
         data.put("request_headers", headers(req != null ? req.headers() : null));
-        data.put("request_body", req != null ? cap(req.bodyToString(), MAX_REQUEST_BODY_CHARS) : "");
+        data.put("request_body", req != null
+                ? CredentialRedactor.redactBody(cap(req.bodyToString(), MAX_REQUEST_BODY_CHARS)) : "");
 
         // --- response ---
         if (resp != null) {
@@ -127,63 +126,23 @@ public class PromptLibrary {
             if (arr.length() >= MAX_HEADERS) {
                 break;
             }
-            arr.put(h.name() + ": " + redactHeaderValue(h.name(), h.value()));
+            arr.put(h.name() + ": " + headerValueForPrompt(h.name(), h.value()));
         }
         return arr;
     }
 
     /**
-     * The header value as it may be shown to the AI. Cookie names and Set-Cookie
-     * attributes (HttpOnly, Secure, SameSite...) are kept because they matter for
-     * the analysis; cookie values and credential header values are not. For
-     * Authorization-style headers the scheme ("Bearer", "Basic") is kept.
+     * Header value as shown to the AI: credentials redacted, then capped with an
+     * explicit marker so a cut is never mistaken for a missing directive.
      */
-    static String redactHeaderValue(String name, String value) {
-        if (value == null) {
-            return "";
+    static String headerValueForPrompt(String name, String value) {
+        String redacted = CredentialRedactor.redactHeaderValue(name, value);
+        boolean policy = name != null && POLICY_HEADERS.contains(name.trim().toLowerCase(Locale.ROOT));
+        int max = policy ? MAX_POLICY_HEADER_CHARS : MAX_HEADER_VALUE_CHARS;
+        if (redacted.length() <= max) {
+            return redacted;
         }
-        String lower = name == null ? "" : name.trim().toLowerCase(Locale.ROOT);
-        if (lower.equals("cookie")) {
-            return redactCookiePairs(value, "; ");
-        }
-        if (lower.equals("set-cookie")) {
-            return redactSetCookie(value);
-        }
-        if (CREDENTIAL_HEADERS.contains(lower)) {
-            if (lower.equals("authorization") || lower.equals("proxy-authorization")) {
-                int space = value.trim().indexOf(' ');
-                if (space > 0) {
-                    return value.trim().substring(0, space) + " " + REDACTED;
-                }
-            }
-            return REDACTED;
-        }
-        return cap(value, MAX_HEADER_VALUE_CHARS);
-    }
-
-    /** "a=1; b=2" -> "a=[REDACTED]; b=[REDACTED]". */
-    private static String redactCookiePairs(String value, String joiner) {
-        StringBuilder out = new StringBuilder();
-        for (String pair : value.split(";")) {
-            String p = pair.trim();
-            if (p.isEmpty()) {
-                continue;
-            }
-            if (out.length() > 0) {
-                out.append(joiner);
-            }
-            int eq = p.indexOf('=');
-            out.append(eq >= 0 ? p.substring(0, eq).trim() : p).append('=').append(REDACTED);
-        }
-        return out.toString();
-    }
-
-    /** "id=abc; Path=/; HttpOnly" -> "id=[REDACTED]; Path=/; HttpOnly" (attributes kept). */
-    private static String redactSetCookie(String value) {
-        int semi = value.indexOf(';');
-        String first = semi >= 0 ? value.substring(0, semi) : value;
-        String attributes = semi >= 0 ? value.substring(semi) : "";
-        return redactCookiePairs(first, "; ") + cap(attributes, MAX_HEADER_VALUE_CHARS);
+        return redacted.substring(0, max) + " ...[truncated " + (redacted.length() - max) + " chars]";
     }
 
     private static String cap(String s, int max) {

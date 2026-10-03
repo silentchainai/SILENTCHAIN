@@ -101,25 +101,36 @@ public class AiPassiveScanCheck implements PassiveScanCheck {
 
         counters.incTotalRequests();
 
+        // Side-effect-free filters first, so "Skipped (Backlog)" only counts
+        // items that would otherwise have been analyzed.
+        if (gate.prefilter(rr.request(), rr.response()) != GateDecision.ANALYZE) {
+            return;   // out of scope / content type / size: silently filtered
+        }
         if (!orchestrator.tryAdmitPassive()) {
             counters.incSkippedBacklog();
             return;
         }
         boolean handedOff = false;
         try {
-            GateDecision decision = gate.evaluate(rr.request(), rr.response());
-            switch (decision) {
+            ScanGate.Reservation reservation = gate.reserve(rr.request());
+            switch (reservation.decision()) {
                 case ANALYZE -> {
-                    // Keep the queued copy on disk, not the heap (large projects).
-                    HttpRequestResponse queued = rr.copyToTempFile();
+                    HttpRequestResponse queued;
+                    try {
+                        // Keep the queued copy on disk, not the heap (large projects).
+                        queued = rr.copyToTempFile();
+                    } catch (RuntimeException e) {
+                        gate.release(reservation);
+                        throw e;
+                    }
                     handedOff = true;   // the job owns the slot from here, even if the queue rejects it
-                    if (!orchestrator.analyzePassive(queued)) {
+                    if (!orchestrator.analyzePassive(queued, () -> gate.release(reservation))) {
                         counters.incSkippedBacklog();
                     }
                 }
                 case SKIP_DUPLICATE -> counters.incSkippedDuplicate();
                 case SKIP_RATE_LIMIT -> counters.incSkippedRateLimit();
-                default -> { /* out of scope / content type / size: silently filtered */ }
+                default -> { /* not reachable after prefilter */ }
             }
         } finally {
             if (!handedOff) {

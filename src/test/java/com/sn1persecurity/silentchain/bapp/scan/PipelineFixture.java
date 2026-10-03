@@ -5,6 +5,8 @@ import burp.api.montoya.core.ByteArray;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
+import burp.api.montoya.scanner.AuditResult;
+import burp.api.montoya.scanner.audit.issues.AuditIssue;
 
 import com.sn1persecurity.silentchain.bapp.ai.AiGate;
 import com.sn1persecurity.silentchain.bapp.ai.AiService;
@@ -20,6 +22,7 @@ import com.sn1persecurity.silentchain.bapp.util.ThreadPool;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
@@ -40,6 +43,8 @@ final class PipelineFixture implements AutoCloseable {
     final List<Throwable> loggedErrors = new ArrayList<>();
     final AtomicBoolean aiEnabled = new AtomicBoolean(true);
     final AtomicBoolean inScope = new AtomicBoolean(true);
+    /** Number of copyToTempFile() calls on exchanges built by {@link #exchange}. */
+    static final AtomicInteger tempFileCopies = new AtomicInteger();
 
     /** When true, jobs are held in {@link #deferred} instead of running inline. */
     boolean defer;
@@ -49,7 +54,11 @@ final class PipelineFixture implements AutoCloseable {
 
     Function<String, Optional<String>> analyzer = prompt -> Optional.of("{\"findings\":[]}");
 
-    final MontoyaFactoryStub factory = MontoyaFactoryStub.install();
+    /** AuditResult.auditResult(...) returns a stub that reports exactly the issues passed in. */
+    final MontoyaFactoryStub factory = MontoyaFactoryStub.install(Map.of("auditResult", a -> {
+        List<?> issues = a[0] instanceof List<?> list ? list : Arrays.asList((AuditIssue[]) a[0]);
+        return DeepStub.of(AuditResult.class, Map.of("auditIssues", x -> issues));
+    }));
     final MontoyaApi api;
     final Settings settings = new Settings();
     final Lifecycle lifecycle = new Lifecycle();
@@ -63,6 +72,7 @@ final class PipelineFixture implements AutoCloseable {
     final AnalysisOrchestrator orchestrator;
 
     PipelineFixture() {
+        tempFileCopies.set(0);
         Map<String, Function<Object[], Object>> overrides = new HashMap<>();
         overrides.put("sendRequest", a -> {
             sendRequests.incrementAndGet();
@@ -149,7 +159,10 @@ final class PipelineFixture implements AutoCloseable {
                 "request", a -> request,
                 "response", a -> response,
                 "hasResponse", a -> withResponse,
-                "copyToTempFile", a -> self[0]));
+                "copyToTempFile", a -> {
+                    tempFileCopies.incrementAndGet();
+                    return self[0];
+                }));
         return self[0];
     }
 

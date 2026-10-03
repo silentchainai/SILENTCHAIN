@@ -53,28 +53,49 @@ class ThreadPoolTest {
     }
 
     @Test
-    void shutdownDiscardsQueuedWork() throws Exception {
+    void shutdownInterruptsRunningWorkAndDiscardsQueuedWork() throws Exception {
         ThreadPool pool = new ThreadPool(DeepStub.of(Logging.class), new Lifecycle());
-        CountDownLatch release = new CountDownLatch(1);
         CountDownLatch started = new CountDownLatch(2);
-        CopyOnWriteArrayList<String> ran = new CopyOnWriteArrayList<>();
+        CountDownLatch interrupted = new CountDownLatch(2);
+        CountDownLatch queuedRan = new CountDownLatch(1);
         Runnable blocker = () -> {
             started.countDown();
             try {
-                release.await();
+                new CountDownLatch(1).await();   // blocks until interrupted
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                interrupted.countDown();
             }
         };
         pool.submitAnalysis("block-1", blocker);
         pool.submitAnalysis("block-2", blocker);
         assertTrue(started.await(5, TimeUnit.SECONDS));
-        pool.submitAnalysis("queued", () -> ran.add("queued"));
+        assertTrue(pool.submitAnalysis("queued", queuedRan::countDown));
 
         pool.shutdownNow();
-        release.countDown();
 
-        assertTrue(ran.isEmpty(), "queued work must not start after unload");
+        assertTrue(interrupted.await(5, TimeUnit.SECONDS), "running work must be interrupted on unload");
+        assertFalse(queuedRan.await(300, TimeUnit.MILLISECONDS), "queued work must not start after unload");
+    }
+
+    @Test
+    void localActionsDoNotWaitBehindAProviderRoundTrip() throws Exception {
+        ThreadPool pool = new ThreadPool(DeepStub.of(Logging.class), new Lifecycle());
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch localRan = new CountDownLatch(1);
+        try {
+            pool.submitInteractive("slow test connection", () -> {
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            assertTrue(pool.submitLocal("csv export", localRan::countDown));
+            assertTrue(localRan.await(5, TimeUnit.SECONDS));
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
     }
 
     @Test

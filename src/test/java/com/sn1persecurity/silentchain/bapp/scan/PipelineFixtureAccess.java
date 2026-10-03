@@ -10,7 +10,7 @@ public final class PipelineFixtureAccess implements AutoCloseable {
 
     public MainTab newMainTab() {
         return new MainTab(f.api, f.settings, new SettingsPersistence(f.api), f.scanState, f.counters,
-                f.tasks, f.findings, f.orchestrator, f.pool, f.aiGate, () -> 0L);
+                f.tasks, f.findings, f.orchestrator, f.pool, f.aiGate, () -> 0L, ScannerStatus.REGISTERED);
     }
 
     @Override

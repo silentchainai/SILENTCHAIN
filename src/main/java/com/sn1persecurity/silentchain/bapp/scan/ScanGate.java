@@ -16,22 +16,26 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Layered filter that decides whether an exchange seen by the passive scan
- * check is worth submitting to the configured AI provider. Order is
- * cheap-to-expensive: in-scope -> content type -> body size -> URL dedup ->
- * per-host rate limit.
+ * Decides whether an exchange seen by the passive scan check is worth
+ * submitting to the configured AI provider, in two steps:
  *
- * Passive analysis is always limited to Burp's target scope: PortSwigger's AI
- * guidance is to send only in-scope traffic, and Burp's live audit tasks and
- * scans can feed out-of-scope items.
- *
- * Thread-safe: the dedup check, the rate-limit check and recording both happen
- * under one lock, so concurrent scanner threads cannot both admit the same URL
- * or overshoot a host's budget.
+ * <ol>
+ *   <li>{@link #prefilter} - side-effect free: in-scope, content type, body
+ *       size. Passive analysis is always limited to Burp's target scope:
+ *       PortSwigger's AI guidance is to send only in-scope traffic, and Burp's
+ *       live audit tasks and scans can feed out-of-scope items.</li>
+ *   <li>{@link #reserve} - URL de-duplication and the per-host rate limit,
+ *       checked and recorded atomically under one lock. A reservation whose job
+ *       never reaches the AI is handed back with {@link #release}, so a dropped
+ *       item is not treated as already analyzed.</li>
+ * </ol>
  */
 public class ScanGate {
 
     private static final long RATE_WINDOW_MILLIS = 60_000L;
+
+    /** Outcome of {@link #reserve}; {@code at} identifies the recorded entries for {@link #release}. */
+    public record Reservation(GateDecision decision, String dedupKey, String host, long at) {}
 
     private final MontoyaApi api;
     private final Settings settings;
@@ -51,12 +55,8 @@ public class ScanGate {
         };
     }
 
-    /**
-     * Full decision with skip-reason attribution. Has side effects ONLY when it
-     * returns {@link GateDecision#ANALYZE}: it records the URL in the dedup map
-     * and the host in the rate-limit window.
-     */
-    public GateDecision evaluate(HttpRequest request, HttpResponse response) {
+    /** Scope, content type and size. No side effects. */
+    public GateDecision prefilter(HttpRequest request, HttpResponse response) {
         if (request == null || response == null) {
             return GateDecision.SKIP_NO_REQUEST;
         }
@@ -65,13 +65,11 @@ public class ScanGate {
             return GateDecision.SKIP_NO_REQUEST;
         }
         int bodyLength = response.body() != null ? response.body().length() : 0;
-        return evaluate(request.method(), url, api.scope().isInScope(url),
-                response.headerValue("Content-Type"), bodyLength, System.currentTimeMillis());
+        return prefilter(url, api.scope().isInScope(url), response.headerValue("Content-Type"), bodyLength);
     }
 
-    /** Pure decision over already-extracted fields (unit-testable without Burp). */
-    GateDecision evaluate(String method, String url, boolean inScope, String contentType,
-                          int bodyLength, long nowMillis) {
+    /** Pure form of {@link #prefilter(HttpRequest, HttpResponse)} (unit-testable without Burp). */
+    GateDecision prefilter(String url, boolean inScope, String contentType, int bodyLength) {
         if (url == null || url.isBlank()) {
             return GateDecision.SKIP_NO_REQUEST;
         }
@@ -84,27 +82,61 @@ public class ScanGate {
         if (bodyLength <= 0 || bodyLength > settings.maxResponseBytes()) {
             return GateDecision.SKIP_SIZE;
         }
+        return GateDecision.ANALYZE;
+    }
 
+    /**
+     * URL de-duplication and per-host rate limit. On {@link GateDecision#ANALYZE}
+     * the URL and the host hit are recorded (atomically with the checks).
+     */
+    public Reservation reserve(HttpRequest request) {
+        return reserve(request.method(), request.url(), System.currentTimeMillis());
+    }
+
+    /** Pure form of {@link #reserve(HttpRequest)} with an explicit clock. */
+    Reservation reserve(String method, String url, long nowMillis) {
         String dedupKey = method + " " + normalizeUrl(url);
         String host = extractHost(url);
         synchronized (lock) {
             Long seenAt = recentUrls.get(dedupKey);
             if (seenAt != null && (nowMillis - seenAt) < settings.urlDedupTtlMillis()) {
-                return GateDecision.SKIP_DUPLICATE;
+                return new Reservation(GateDecision.SKIP_DUPLICATE, dedupKey, host, nowMillis);
             }
             Deque<Long> window = null;
             if (host != null) {
                 pruneHostWindows(nowMillis);
                 window = hostWindows.computeIfAbsent(host, h -> new ArrayDeque<>());
                 if (window.size() >= settings.hostRequestsPerMinute()) {
-                    return GateDecision.SKIP_RATE_LIMIT;
+                    return new Reservation(GateDecision.SKIP_RATE_LIMIT, dedupKey, host, nowMillis);
                 }
             }
             recentUrls.put(dedupKey, nowMillis);
             if (window != null) {
                 window.addLast(nowMillis);
             }
-            return GateDecision.ANALYZE;
+            return new Reservation(GateDecision.ANALYZE, dedupKey, host, nowMillis);
+        }
+    }
+
+    /**
+     * Undo an ANALYZE reservation whose job ended without reaching the AI. Only
+     * the entries recorded by that reservation are removed, never a newer one.
+     */
+    public void release(Reservation reservation) {
+        if (reservation == null || reservation.decision() != GateDecision.ANALYZE) {
+            return;
+        }
+        synchronized (lock) {
+            recentUrls.remove(reservation.dedupKey(), reservation.at());
+            if (reservation.host() != null) {
+                Deque<Long> window = hostWindows.get(reservation.host());
+                if (window != null) {
+                    window.removeFirstOccurrence(reservation.at());
+                    if (window.isEmpty()) {
+                        hostWindows.remove(reservation.host());
+                    }
+                }
+            }
         }
     }
 

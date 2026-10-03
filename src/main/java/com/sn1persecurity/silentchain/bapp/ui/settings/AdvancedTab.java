@@ -41,7 +41,8 @@ public class AdvancedTab extends JPanel {
     private final JCheckBox verboseLogging = new JCheckBox("Verbose logging");
     private final JTextField requestTimeout = new JTextField(8);
 
-    private final JCheckBox sanitizer = new JCheckBox("Redact secrets / PII before sending to AI");
+    private final JCheckBox sanitizer =
+            new JCheckBox("Redact secrets / PII and neutralize prompt injection before sending to AI");
     private final JTextField maxResponseKb = new JTextField(8);
     private final JTextField hostRpm = new JTextField(8);
     private final JTextField dedupMinutes = new JTextField(8);
@@ -99,6 +100,16 @@ public class AdvancedTab extends JPanel {
             verboseLogging.setSelected(settings.verbose());
             sanitizer.setSelected(settings.sanitizerEnabled());
             showNumbers();
+        } finally {
+            loading = false;
+        }
+    }
+
+    /** Reflect a passive on/off change made elsewhere (the main tab) without firing the listener. */
+    public void syncPassive() {
+        loading = true;
+        try {
+            passiveScanning.setSelected(settings.passiveEnabled());
         } finally {
             loading = false;
         }

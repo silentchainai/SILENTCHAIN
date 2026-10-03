@@ -6,6 +6,9 @@ import burp.api.montoya.persistence.Preferences;
 import com.sn1persecurity.silentchain.bapp.ai.providers.ProviderId;
 import com.sn1persecurity.silentchain.bapp.config.Settings.ProviderConfig;
 
+import java.net.URI;
+import java.util.Locale;
+
 public class SettingsPersistence {
 
     // Scan toggles
@@ -39,6 +42,12 @@ public class SettingsPersistence {
     // UI
     private static final String K_THEME             = "silentchain.theme";
 
+    // Settings schema version. Absent = written by 1.3.x or earlier.
+    private static final String K_SETTINGS_VERSION  = "silentchain.settingsVersion";
+    private static final int SETTINGS_VERSION       = 2;
+    /** 1.3.x saved this default although it never applied it; it is not a user choice. */
+    private static final int LEGACY_DEFAULT_TIMEOUT_SECONDS = 60;
+
     // First-run consent
     private static final String K_FIRST_RUN_ACK     = "silentchain.firstRunAcknowledged";
 
@@ -69,7 +78,11 @@ public class SettingsPersistence {
         s = prefs.getString(K_PROVIDER);          if (s != null) into.setProvider(safeProvider(s));
         i = prefs.getInteger(K_MAX_TOKENS);       if (i != null) into.setMaxTokens(i);
         s = prefs.getString(K_AZURE_API_VERSION); if (s != null) into.setAzureApiVersion(s);
-        i = prefs.getInteger(K_REQUEST_TIMEOUT);  if (i != null) into.setRequestTimeoutSeconds(i);
+        i = prefs.getInteger(K_REQUEST_TIMEOUT);
+        boolean legacy = prefs.getInteger(K_SETTINGS_VERSION) == null;
+        if (i != null && !(legacy && i == LEGACY_DEFAULT_TIMEOUT_SECONDS)) {
+            into.setRequestTimeoutSeconds(i);
+        }
         s = prefs.getString(K_OLLAMA_STRUCTURED); if (s != null) into.setOllamaStructuredOutput(safeStructured(s));
         i = prefs.getInteger(K_OLLAMA_NUM_CTX);   if (i != null) into.setOllamaNumCtx(i);
 
@@ -90,13 +103,59 @@ public class SettingsPersistence {
         s = prefs.getString(K_THEME);             if (s != null) into.setTheme(safeTheme(s));
     }
 
-    /** Pre-1.4 kept one URL/key/model for whichever provider was selected; give them to that provider. */
+    /**
+     * Pre-1.4 kept one URL/key/model shared by all providers and saved them even
+     * while Burp AI (which uses none of them) was selected. Give them to the
+     * provider they belong to: the selected one, or, when Burp AI is selected,
+     * the provider they identify. Ollama takes no key.
+     */
     private void migrateLegacyProviderConfig(Settings into) {
         String url = prefs.getString(K_LEGACY_API_URL);
         String key = prefs.getString(K_LEGACY_API_KEY);
         String model = prefs.getString(K_LEGACY_MODEL);
-        if (url != null || key != null || model != null) {
-            into.setConfig(into.provider(), new ProviderConfig(url, key, model));
+        if (url == null && key == null && model == null) {
+            return;
+        }
+        ProviderId owner = into.provider();
+        if (owner == ProviderId.BURP_AI) {
+            owner = inferLegacyOwner(url, key, model);
+            if (owner == null) {
+                return;
+            }
+        }
+        into.setConfig(owner, new ProviderConfig(url, owner == ProviderId.OLLAMA ? "" : key, model));
+    }
+
+    /** The third-party provider the legacy URL / key / model identify, or null. */
+    static ProviderId inferLegacyOwner(String url, String key, String model) {
+        String u = url == null ? "" : url.trim().toLowerCase(Locale.ROOT);
+        if (!u.isEmpty()) {
+            String host = hostOf(u);
+            if (host != null) {
+                if (host.equals("api.openai.com")) return ProviderId.OPENAI;
+                if (host.equals("api.anthropic.com")) return ProviderId.CLAUDE;
+                if (host.equals("generativelanguage.googleapis.com")) return ProviderId.GEMINI;
+                if (host.endsWith(".azure.com")) return ProviderId.AZURE_FOUNDRY;
+                if (u.contains(":11434")) return ProviderId.OLLAMA;
+            }
+        }
+        String k = key == null ? "" : key.trim();
+        if (k.startsWith("sk-ant-")) return ProviderId.CLAUDE;
+        if (k.startsWith("sk-")) return ProviderId.OPENAI;
+        if (k.startsWith("AIza")) return ProviderId.GEMINI;
+        String m = model == null ? "" : model.trim().toLowerCase(Locale.ROOT);
+        if (m.startsWith("claude")) return ProviderId.CLAUDE;
+        if (m.startsWith("gemini")) return ProviderId.GEMINI;
+        if (m.startsWith("gpt") || m.matches("o\\d.*")) return ProviderId.OPENAI;
+        if (m.contains(":")) return ProviderId.OLLAMA;
+        return null;
+    }
+
+    private static String hostOf(String url) {
+        try {
+            return new URI(url).getHost();
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -128,6 +187,7 @@ public class SettingsPersistence {
         prefs.setString(K_LEGACY_MODEL, current.model());
 
         prefs.setString(K_THEME, from.theme().name());
+        prefs.setInteger(K_SETTINGS_VERSION, SETTINGS_VERSION);
     }
 
     public boolean firstRunAcknowledged() {

@@ -2,6 +2,7 @@ package com.sn1persecurity.silentchain.bapp.ui.main;
 
 import com.sn1persecurity.silentchain.bapp.ai.AiGate;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
+import com.sn1persecurity.silentchain.bapp.scan.ScannerStatus;
 import com.sn1persecurity.silentchain.bapp.state.ScanState;
 
 import javax.swing.BorderFactory;
@@ -25,14 +26,16 @@ public class RuntimeStatusLine extends JPanel {
     private final ScanState scanState;
     private final AiGate aiGate;
     private final LongSupplier lastPassiveCallbackMillis;
+    private final ScannerStatus scannerStatus;
     private final JLabel label = new JLabel(" ");
 
     public RuntimeStatusLine(Settings settings, ScanState scanState, AiGate aiGate,
-                             LongSupplier lastPassiveCallbackMillis) {
+                             LongSupplier lastPassiveCallbackMillis, ScannerStatus scannerStatus) {
         this.settings = settings;
         this.scanState = scanState;
         this.aiGate = aiGate;
         this.lastPassiveCallbackMillis = lastPassiveCallbackMillis;
+        this.scannerStatus = scannerStatus;
         setBorder(BorderFactory.createTitledBorder("Runtime Status"));
         setLayout(new FlowLayout(FlowLayout.CENTER, 4, 2));
         setAlignmentX(Component.CENTER_ALIGNMENT);
@@ -43,6 +46,11 @@ public class RuntimeStatusLine extends JPanel {
     }
 
     public void refresh() {
+        if (scannerStatus == ScannerStatus.COMMUNITY_EDITION) {
+            label.setText("Requires Burp Suite Professional: AI analysis is not available in "
+                    + "Burp Suite Community Edition.");
+            return;
+        }
         String provider = settings.provider().displayName();
         String model = settings.model().isBlank() ? "(default)" : settings.model();
         String scanning;
@@ -56,7 +64,9 @@ public class RuntimeStatusLine extends JPanel {
         String ai = aiGate.isEnabled() ? "Enabled" : "Disabled (tick 'Use AI' in Extensions > Installed)";
         StringBuilder text = new StringBuilder(String.format(
                 "Provider: %s | Model: %s | Scanning: %s | AI: %s", provider, model, scanning, ai));
-        if (settings.passiveEnabled() && lastPassiveCallbackMillis.getAsLong() == 0L) {
+        if (scannerStatus == ScannerStatus.FAILED) {
+            text.append(" | Passive scan check not registered (see Extensions > Errors)");
+        } else if (settings.passiveEnabled() && lastPassiveCallbackMillis.getAsLong() == 0L) {
             text.append(" | Waiting for Burp Scanner (needs a live audit task)");
         }
         label.setText(text.toString());

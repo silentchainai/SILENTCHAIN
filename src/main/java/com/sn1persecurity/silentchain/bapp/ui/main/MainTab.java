@@ -7,6 +7,7 @@ import com.sn1persecurity.silentchain.bapp.config.Settings;
 import com.sn1persecurity.silentchain.bapp.config.SettingsPersistence;
 import com.sn1persecurity.silentchain.bapp.export.CsvExporter;
 import com.sn1persecurity.silentchain.bapp.scan.AnalysisOrchestrator;
+import com.sn1persecurity.silentchain.bapp.scan.ScannerStatus;
 import com.sn1persecurity.silentchain.bapp.state.Counters;
 import com.sn1persecurity.silentchain.bapp.state.FindingRow;
 import com.sn1persecurity.silentchain.bapp.state.FindingsRegistry;
@@ -59,6 +60,7 @@ public class MainTab extends JPanel implements ControlBar.Actions {
     private final Timer refreshTimer;
 
     private boolean refreshFailureLogged;
+    private volatile Runnable onPassiveChanged = () -> { };
 
     public MainTab(MontoyaApi api,
                    Settings settings,
@@ -70,7 +72,8 @@ public class MainTab extends JPanel implements ControlBar.Actions {
                    AnalysisOrchestrator orchestrator,
                    ThreadPool threadPool,
                    AiGate aiGate,
-                   LongSupplier lastPassiveCallbackMillis) {
+                   LongSupplier lastPassiveCallbackMillis,
+                   ScannerStatus scannerStatus) {
         super(new BorderLayout());
         this.api = api;
         this.settings = settings;
@@ -82,7 +85,8 @@ public class MainTab extends JPanel implements ControlBar.Actions {
         this.threadPool = threadPool;
 
         this.statisticsPanel = new StatisticsPanel(counters);
-        this.runtimeStatusLine = new RuntimeStatusLine(settings, scanState, aiGate, lastPassiveCallbackMillis);
+        this.runtimeStatusLine = new RuntimeStatusLine(settings, scanState, aiGate, lastPassiveCallbackMillis,
+                scannerStatus);
         this.controlBar = new ControlBar(settings, scanState, this);
         this.taskTablePanel = new TaskTablePanel(taskRegistry);
         this.findingsTablePanel = new FindingsTablePanel(findingsRegistry);
@@ -141,6 +145,11 @@ public class MainTab extends JPanel implements ControlBar.Actions {
         findingsTablePanel.refresh();
     }
 
+    /** Called after Start/Stop Scanning here, so other views (the settings panel) can follow. */
+    public void setOnPassiveChanged(Runnable hook) {
+        this.onPassiveChanged = hook != null ? hook : () -> { };
+    }
+
     /** Re-apply the console theme. */
     public void applyTheme() {
         consolePane.applyTheme(settings.theme());
@@ -173,6 +182,7 @@ public class MainTab extends JPanel implements ControlBar.Actions {
 
         settings.setPassiveEnabled(now);
         persistence.save(settings);
+        onPassiveChanged.run();
         controlBar.refresh();
         runtimeStatusLine.refresh();
         scanState.info("SILENTCHAIN: passive scanning " + (now ? "STARTED" : "STOPPED") + ".");
@@ -208,7 +218,7 @@ public class MainTab extends JPanel implements ControlBar.Actions {
             return;
         }
         List<FindingRow> rows = findingsRegistry.snapshot();
-        boolean queued = threadPool.submitInteractive("CSV export", () -> {
+        boolean queued = threadPool.submitLocal("CSV export", () -> {
             try {
                 CsvExporter.write(path, rows);
                 scanState.info("SILENTCHAIN: exported " + rows.size() + " finding(s) to " + path);
@@ -224,7 +234,7 @@ public class MainTab extends JPanel implements ControlBar.Actions {
 
     @Override
     public void onUpgrade() {
-        threadPool.submitInteractive("open upgrade page", () -> {
+        boolean queued = threadPool.submitLocal("open upgrade page", () -> {
             try {
                 if (Desktop.isDesktopSupported()) {
                     Desktop.getDesktop().browse(new URI(UPGRADE_URL));
@@ -233,5 +243,8 @@ public class MainTab extends JPanel implements ControlBar.Actions {
                 api.logging().logToError("Failed to open upgrade page: " + e.getMessage());
             }
         });
+        if (!queued) {
+            scanState.info("SILENTCHAIN: could not open the page (busy); try again.");
+        }
     }
 }

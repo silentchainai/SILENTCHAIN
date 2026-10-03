@@ -16,6 +16,7 @@ import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient;
 import com.sn1persecurity.silentchain.bapp.scan.AiPassiveScanCheck;
 import com.sn1persecurity.silentchain.bapp.scan.AnalysisOrchestrator;
 import com.sn1persecurity.silentchain.bapp.scan.ScanGate;
+import com.sn1persecurity.silentchain.bapp.scan.ScannerStatus;
 import com.sn1persecurity.silentchain.bapp.state.Counters;
 import com.sn1persecurity.silentchain.bapp.state.FindingsRegistry;
 import com.sn1persecurity.silentchain.bapp.state.ScanState;
@@ -70,7 +71,7 @@ public class SilentchainExtension implements BurpExtension {
         ScanGate gate = new ScanGate(api, settings);
         AiPassiveScanCheck passiveCheck = new AiPassiveScanCheck(api, gate, aiGate, aiService,
                 orchestrator, settings, scanState, counters, lifecycle);
-        registerPassiveScanCheck(api, passiveCheck);
+        ScannerStatus scannerStatus = registerPassiveScanCheck(api, passiveCheck);
 
         // ---- UI ------------------------------------------------------------
         AtomicReference<MainTab> mainTabRef = new AtomicReference<>();
@@ -78,25 +79,39 @@ public class SilentchainExtension implements BurpExtension {
             if (lifecycle.isUnloading()) {
                 return;
             }
-            MainTab mainTab = new MainTab(api, settings, persistence, scanState, counters, taskRegistry,
-                    findingsRegistry, orchestrator, threadPool, aiGate, passiveCheck::lastCallbackMillis);
-            mainTabRef.set(mainTab);
+            MainTab mainTab = null;
+            Registration settingsReg = null;
+            Registration tabReg = null;
+            boolean ready = false;
+            try {
+                mainTab = new MainTab(api, settings, persistence, scanState, counters, taskRegistry,
+                        findingsRegistry, orchestrator, threadPool, aiGate, passiveCheck::lastCallbackMillis,
+                        scannerStatus);
+                mainTabRef.set(mainTab);
+                SilentchainSettingsPanel settingsPanel = new SilentchainSettingsPanel(api, settings, persistence,
+                        dispatcher, aiGate, scanState, taskRegistry, threadPool, mainTab::onSettingsChanged);
+                mainTab.setOnPassiveChanged(settingsPanel::syncPassive);
 
-            Registration settingsReg = api.userInterface().registerSettingsPanel(new SilentchainSettingsPanel(
-                    api, settings, persistence, dispatcher, aiGate, scanState, taskRegistry, threadPool,
-                    mainTab::onSettingsChanged));
-            Registration tabReg = api.userInterface().registerSuiteTab("SILENTCHAIN Community", mainTab);
+                settingsReg = api.userInterface().registerSettingsPanel(settingsPanel);
+                tabReg = api.userInterface().registerSuiteTab("SILENTCHAIN Community", mainTab);
 
-            if (lifecycle.isUnloading()) {
-                // Unloaded while the UI was being built: undo what this block registered.
-                mainTab.dispose();
-                settingsReg.deregister();
-                tabReg.deregister();
-                return;
+                ready = !lifecycle.isUnloading();   // false: unloaded while the UI was being built
+                if (ready) {
+                    scanState.info(EXTENSION_NAME + " v" + EXTENSION_VERSION + " ready. Passive scanning is "
+                            + (settings.passiveEnabled() ? "ENABLED" : "DISABLED")
+                            + " | Provider: " + settings.provider().displayName() + ".");
+                }
+            } catch (Throwable t) {
+                api.logging().logToError(EXTENSION_NAME + ": could not build the user interface", t);
+            } finally {
+                if (!ready) {
+                    if (mainTab != null) {
+                        mainTab.dispose();
+                    }
+                    deregisterQuietly(settingsReg);
+                    deregisterQuietly(tabReg);
+                }
             }
-            scanState.info(EXTENSION_NAME + " v" + EXTENSION_VERSION + " ready. Passive scanning is "
-                    + (settings.passiveEnabled() ? "ENABLED" : "DISABLED")
-                    + " | Provider: " + settings.provider().displayName() + ".");
         });
 
         api.extension().registerUnloadingHandler(() -> {
@@ -124,7 +139,7 @@ public class SilentchainExtension implements BurpExtension {
      * permission, which gates every provider, is never granted), so the
      * extension stays idle and says why.
      */
-    private static void registerPassiveScanCheck(MontoyaApi api, AiPassiveScanCheck check) {
+    private static ScannerStatus registerPassiveScanCheck(MontoyaApi api, AiPassiveScanCheck check) {
         BurpSuiteEdition edition;
         try {
             edition = api.burpSuite().version().edition();
@@ -135,13 +150,25 @@ public class SilentchainExtension implements BurpExtension {
             api.logging().logToOutput(EXTENSION_NAME + " requires Burp Suite Professional: automatic analysis "
                     + "runs in Burp Scanner and AI features need Burp's 'Use AI' permission, neither of which "
                     + "is available in Burp Suite Community Edition. The extension is loaded but idle.");
-            return;
+            return ScannerStatus.COMMUNITY_EDITION;
         }
         try {
             api.scanner().registerPassiveScanCheck(check, ScanCheckType.PER_REQUEST);
+            return ScannerStatus.REGISTERED;
         } catch (Throwable t) {
             api.logging().logToError(EXTENSION_NAME + ": could not register the passive scan check; "
                     + "automatic analysis is unavailable (right-click analysis still works).", t);
+            return ScannerStatus.FAILED;
+        }
+    }
+
+    private static void deregisterQuietly(Registration registration) {
+        if (registration != null) {
+            try {
+                registration.deregister();
+            } catch (Throwable ignored) {
+                // best effort while tearing down a half-built UI
+            }
         }
     }
 

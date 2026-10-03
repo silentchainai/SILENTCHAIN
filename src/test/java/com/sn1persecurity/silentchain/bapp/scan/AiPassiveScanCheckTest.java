@@ -7,14 +7,14 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AiPassiveScanCheckTest {
 
     private final PipelineFixture f = new PipelineFixture();
-    private final AiPassiveScanCheck check = new AiPassiveScanCheck(f.api, new ScanGate(f.api, f.settings),
-            f.aiGate, f.aiService, f.orchestrator, f.settings, f.scanState, f.counters, f.lifecycle);
+    private final ScanGate gate = new ScanGate(f.api, f.settings);
+    private final AiPassiveScanCheck check = new AiPassiveScanCheck(f.api, gate, f.aiGate, f.aiService,
+            f.orchestrator, f.settings, f.scanState, f.counters, f.lifecycle);
 
     @AfterEach
     void tearDown() {
@@ -22,20 +22,21 @@ class AiPassiveScanCheckTest {
     }
 
     @Test
-    void hasANameAndAlwaysReturnsAResult() {
+    void returnsAnEmptyResultImmediately() {
         assertFalse(check.checkName().isBlank());
         AuditResult result = check.doCheck(PipelineFixture.exchange(true));
-        assertNotNull(result);
+        assertTrue(result.auditIssues().isEmpty(), "AI findings are added asynchronously, never returned here");
         assertTrue(check.lastCallbackMillis() > 0);
     }
 
     @Test
-    void eligibleInScopeExchangeIsAnalyzedOnce() {
+    void eligibleInScopeExchangeIsAnalyzedOnceFromATempFileCopy() {
         check.doCheck(PipelineFixture.exchange(true));
         check.doCheck(PipelineFixture.exchange(true));   // same URL again
 
         assertEquals(1, f.analyzerCalls.get());
         assertEquals(1, f.counters.skippedDuplicate());
+        assertEquals(1, PipelineFixture.tempFileCopies.get(), "the queued copy lives on disk");
         assertEquals(0, f.sendRequests.get());
         assertTrue(f.allPassiveSlotsFree());
     }
@@ -50,13 +51,14 @@ class AiPassiveScanCheckTest {
     }
 
     @Test
-    void outOfScopeIsNeverAnalyzed() {
+    void outOfScopeIsNeverAnalyzedAndNotCountedAsBacklog() {
         f.inScope.set(false);
 
         check.doCheck(PipelineFixture.exchange(true));
 
         assertEquals(0, f.tasks.size());
         assertEquals(0, f.analyzerCalls.get());
+        assertEquals(0, f.counters.skippedBacklog());
         assertTrue(f.allPassiveSlotsFree());
     }
 
@@ -89,16 +91,32 @@ class AiPassiveScanCheckTest {
         assertEquals(1, f.counters.skippedBacklog());
     }
 
+    /** A URL whose job never reached the AI is not treated as already analyzed. */
+    @Test
+    void abandonedItemCanBeAnalyzedLater() {
+        f.defer = true;
+        check.doCheck(PipelineFixture.exchange(true));
+        f.settings.setPassiveEnabled(false);   // Stop Scanning before the job runs
+        f.runDeferred();
+        assertEquals(0, f.analyzerCalls.get());
+
+        f.defer = false;
+        f.settings.setPassiveEnabled(true);
+        check.doCheck(PipelineFixture.exchange(true));
+
+        assertEquals(1, f.analyzerCalls.get());
+        assertEquals(0, f.counters.skippedDuplicate());
+    }
+
     @Test
     void failuresInsideTheCheckAreContained() {
-        f.inScope.set(true);
         AiPassiveScanCheck broken = new AiPassiveScanCheck(f.api, null, f.aiGate, f.aiService, f.orchestrator,
                 f.settings, f.scanState, f.counters, f.lifecycle);
 
         AuditResult result = broken.doCheck(PipelineFixture.exchange(true));   // NPE on the null gate
 
-        assertNotNull(result);
+        assertTrue(result.auditIssues().isEmpty());
         assertEquals(1, f.loggedErrors.size());
-        assertTrue(f.allPassiveSlotsFree(), "the slot must be released when evaluation throws");
+        assertTrue(f.allPassiveSlotsFree(), "no slot may leak when evaluation throws");
     }
 }

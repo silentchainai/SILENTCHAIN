@@ -14,10 +14,12 @@ import com.sn1persecurity.silentchain.bapp.ai.providers.TestResult;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient;
 
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * Constructs every {@link LlmProvider}, holds them in an enum-keyed map, and
@@ -30,11 +32,16 @@ import java.util.Optional;
  */
 public class AiDispatcher {
 
+    /** Model names shown in the UI must look like model names (they come from the provider). */
+    private static final Pattern MODEL_NAME = Pattern.compile("[A-Za-z0-9._:/@+\\-]{1,200}");
+
+    private final MontoyaApi api;
     private final Settings settings;
     private final AiGate aiGate;
     private final Map<ProviderId, LlmProvider> providers = new EnumMap<>(ProviderId.class);
 
     public AiDispatcher(MontoyaApi api, MontoyaHttpClient http, Settings settings, AiGate aiGate) {
+        this.api = api;
         this.settings = settings;
         this.aiGate = aiGate;
 
@@ -71,7 +78,21 @@ public class AiDispatcher {
         if (!aiGate.isEnabled()) {
             return List.of();
         }
-        return providers.get(which).listModels();
+        return plausibleModelNames(providers.get(which).listModels());
+    }
+
+    private List<String> plausibleModelNames(List<String> names) {
+        List<String> kept = new ArrayList<>();
+        for (String name : names) {
+            if (name != null && MODEL_NAME.matcher(name).matches()) {
+                kept.add(name);
+            }
+        }
+        if (kept.size() < names.size()) {
+            api.logging().logToError("SILENTCHAIN: ignored " + (names.size() - kept.size())
+                    + " model name(s) with unexpected characters from the provider.");
+        }
+        return kept;
     }
 
     public TestResult testConnection(ProviderId which) {
