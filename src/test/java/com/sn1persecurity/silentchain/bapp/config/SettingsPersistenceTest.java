@@ -118,6 +118,9 @@ class SettingsPersistenceTest {
         assertEquals(ProviderId.AZURE_FOUNDRY,
                 SettingsPersistence.inferLegacyOwner("https://x.openai.azure.com", "k", "deploy"));
         assertEquals(ProviderId.OLLAMA, SettingsPersistence.inferLegacyOwner("", "", "qwen3:8b"));
+        assertEquals(ProviderId.OLLAMA, SettingsPersistence.inferLegacyOwner("", "", "gpt-oss:20b"));
+        assertEquals(ProviderId.OPENAI, SettingsPersistence.inferLegacyOwner("", "", "ft:gpt-4o-mini:org::abc"));
+        assertEquals(ProviderId.OPENAI, SettingsPersistence.inferLegacyOwner("", "", "gpt-4o"));
         assertNull(SettingsPersistence.inferLegacyOwner("", "", ""));
     }
 
@@ -144,5 +147,36 @@ class SettingsPersistenceTest {
         Settings reloaded = new Settings();
         persistence.load(reloaded);
         assertEquals(60, reloaded.requestTimeoutSeconds());
+    }
+
+    /** A custom OpenAI-compatible endpoint saved under Burp AI keeps its URL, key and model together. */
+    @Test
+    void unidentifiedCustomEndpointUnderBurpAiGoesToTheOpenAiCompatibleSlot() {
+        Map<String, Object> store = new HashMap<>();
+        store.put("String:silentchain.provider", "BURP_AI");
+        store.put("String:silentchain.apiUrl", "http://localhost:1234/v1");
+        store.put("String:silentchain.apiKey", "lm-studio");
+        store.put("String:silentchain.model", "qwen2.5-7b-instruct");
+
+        Settings s = new Settings();
+        new SettingsPersistence(preferences(store)).load(s);
+
+        assertEquals(new ProviderConfig("http://localhost:1234/v1", "lm-studio", "qwen2.5-7b-instruct"),
+                s.config(ProviderId.OPENAI));
+    }
+
+    /** While Burp AI is selected, saving leaves the 1.3.x single keys alone (downgrades keep them). */
+    @Test
+    void savingWithBurpAiSelectedKeepsTheLegacyKeys() {
+        Map<String, Object> store = new HashMap<>();
+        store.put("String:silentchain.provider", "BURP_AI");
+        store.put("String:silentchain.apiKey", "unidentifiable-key");
+        SettingsPersistence persistence = new SettingsPersistence(preferences(store));
+        Settings s = new Settings();
+        persistence.load(s);
+
+        persistence.save(s);
+
+        assertEquals("unidentifiable-key", store.get("String:silentchain.apiKey"));
     }
 }

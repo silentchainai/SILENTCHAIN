@@ -270,4 +270,43 @@ class AnalysisOrchestratorTest {
         assertEquals(TaskStatus.CANCELLED, onlyTask().status());
         assertEquals(0, f.analyzerCalls.get());
     }
+
+    /** Cancel All landing between park() and the job reaching the parked list must not strand it. */
+    @Test
+    void cancelAllWhileAJobIsBeingParkedReleasesEverything() {
+        f.scanState.setPaused(true);
+        PipelineFixture.onCopyToTempFile = () -> f.orchestrator.cancelAll();   // during parking
+
+        f.orchestrator.analyzeOnDemand(PipelineFixture.exchange(true));
+
+        assertEquals(TaskStatus.CANCELLED, onlyTask().status());
+        assertEquals(ThreadPool.ANALYSIS_QUEUE, f.orchestrator.availableJobSlots());
+        f.scanState.setPaused(false);
+        assertEquals(0, f.analyzerCalls.get());
+    }
+
+    @Test
+    void unconfiguredProviderSkipsWithoutCountingOrConsumingTheReservation() {
+        f.defer = true;
+        queuePassive(true);
+
+        f.providerConfigured.set(false);
+        f.runDeferred();
+
+        assertEquals(TaskStatus.SKIPPED, onlyTask().status());
+        assertEquals(0, f.counters.analyzed());
+        assertEquals(1, abandoned.get());
+    }
+
+    @Test
+    void scopeIsRecheckedAfterTheResponseFetch() {
+        f.onSendRequest = () -> f.inScope.set(false);   // the user narrowed the scope during the fetch
+
+        f.orchestrator.analyzeOnDemand(PipelineFixture.exchange(false));
+
+        assertEquals(1, f.sendRequests.get());
+        assertEquals(0, f.analyzerCalls.get());
+        assertEquals(TaskStatus.SKIPPED, onlyTask().status());
+        assertEquals(ThreadPool.ANALYSIS_QUEUE, f.orchestrator.availableJobSlots());
+    }
 }

@@ -45,7 +45,8 @@ The destination of that data depends on the AI provider you select:
   content for in-scope targets is transmitted to that provider's endpoint under its terms.
 
 Credentials (cookie values, `Authorization` and API-key/token header values, and parameters or
-JSON fields named like credentials) are always replaced with `[REDACTED]` before any AI request. The extension's built-in
+JSON fields named like credentials, in requests and responses) are always replaced with `[REDACTED]`
+before any AI request. The extension's built-in
 **DataSanitizer** (enabled by default) additionally redacts common secrets and PII (API keys,
 bearer tokens, session cookies, emails) and neutralizes prompt-injection patterns before
 content is sent to any provider; it is not a guarantee. The extension

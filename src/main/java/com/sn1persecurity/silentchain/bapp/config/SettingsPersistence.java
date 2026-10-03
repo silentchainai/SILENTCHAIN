@@ -120,7 +120,13 @@ public class SettingsPersistence {
         if (owner == ProviderId.BURP_AI) {
             owner = inferLegacyOwner(url, key, model);
             if (owner == null) {
-                return;
+                // A custom endpoint (e.g. an OpenAI-compatible gateway) stays with its own URL;
+                // a bare key with no URL is not given to any provider. The legacy keys are kept
+                // either way (save() leaves them alone while Burp AI is selected).
+                if (url == null || url.isBlank()) {
+                    return;
+                }
+                owner = ProviderId.OPENAI;
             }
         }
         into.setConfig(owner, new ProviderConfig(url, owner == ProviderId.OLLAMA ? "" : key, model));
@@ -144,10 +150,11 @@ public class SettingsPersistence {
         if (k.startsWith("sk-")) return ProviderId.OPENAI;
         if (k.startsWith("AIza")) return ProviderId.GEMINI;
         String m = model == null ? "" : model.trim().toLowerCase(Locale.ROOT);
+        // Ollama tags (name:tag) first: gpt-oss:20b is an Ollama model. OpenAI fine-tunes start with "ft:".
+        if (m.contains(":") && !m.startsWith("ft:")) return ProviderId.OLLAMA;
         if (m.startsWith("claude")) return ProviderId.CLAUDE;
         if (m.startsWith("gemini")) return ProviderId.GEMINI;
-        if (m.startsWith("gpt") || m.matches("o\\d.*")) return ProviderId.OPENAI;
-        if (m.contains(":")) return ProviderId.OLLAMA;
+        if (m.startsWith("gpt") || m.startsWith("ft:") || m.matches("o\\d.*")) return ProviderId.OPENAI;
         return null;
     }
 
@@ -181,10 +188,14 @@ public class SettingsPersistence {
             prefs.setString(providerKey(p, "apiKey"), cfg.apiKey());
             prefs.setString(providerKey(p, "model"), cfg.model());
         }
-        ProviderConfig current = from.config(from.provider());
-        prefs.setString(K_LEGACY_API_URL, current.apiUrl());
-        prefs.setString(K_LEGACY_API_KEY, current.apiKey());
-        prefs.setString(K_LEGACY_MODEL, current.model());
+        // Legacy single keys mirror the selected third-party provider (for downgrades). While
+        // Burp AI is selected they are left as they are, as 1.3.x did.
+        if (from.provider() != ProviderId.BURP_AI) {
+            ProviderConfig current = from.config(from.provider());
+            prefs.setString(K_LEGACY_API_URL, current.apiUrl());
+            prefs.setString(K_LEGACY_API_KEY, current.apiKey());
+            prefs.setString(K_LEGACY_MODEL, current.model());
+        }
 
         prefs.setString(K_THEME, from.theme().name());
         prefs.setInteger(K_SETTINGS_VERSION, SETTINGS_VERSION);

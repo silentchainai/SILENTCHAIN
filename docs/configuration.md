@@ -76,8 +76,12 @@ Independently of this setting, credentials are always replaced with `[REDACTED]`
 request: cookie values (headers and the parameter sample), `Authorization`-style and
 API-key/token header values (for example `X-Api-Key`, `Ocp-Apim-Subscription-Key`,
 `X-CSRF-Token`), and parameters, JSON fields and multipart fields named like credentials
-(password, token, api_key, session...) in the URL, the parameter sample and the request body.
-Cookie and parameter names, `Set-Cookie` attributes and the `Authorization` scheme are kept.
+(password, token, api_key, session...) in the URL, URL-bearing headers (Referer, Location), the
+parameter sample and the request and response bodies (form, JSON including nested values,
+multipart, XML, HTML form inputs). Cookie and parameter names, `Set-Cookie` attributes and the
+`Authorization` scheme are kept, and an empty value stays empty. Long bodies, values and header
+lists are cut with a visible marker, and security headers (CSP, HSTS, Set-Cookie...) are listed
+first so they are never cut.
 The 1.3.x default timeout of 60 s (saved but never applied) migrates to 120 s once; a value you
 chose yourself is kept.
 

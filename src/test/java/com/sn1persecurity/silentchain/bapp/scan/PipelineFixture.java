@@ -43,6 +43,11 @@ final class PipelineFixture implements AutoCloseable {
     final List<Throwable> loggedErrors = new ArrayList<>();
     final AtomicBoolean aiEnabled = new AtomicBoolean(true);
     final AtomicBoolean inScope = new AtomicBoolean(true);
+    final AtomicBoolean providerConfigured = new AtomicBoolean(true);
+    /** Runs inside api.http().sendRequest (the right-click response fetch). */
+    Runnable onSendRequest = () -> { };
+    /** Runs inside copyToTempFile() of exchanges built by {@link #exchange}. */
+    static Runnable onCopyToTempFile = () -> { };
     /** Number of copyToTempFile() calls on exchanges built by {@link #exchange}. */
     static final AtomicInteger tempFileCopies = new AtomicInteger();
 
@@ -73,9 +78,11 @@ final class PipelineFixture implements AutoCloseable {
 
     PipelineFixture() {
         tempFileCopies.set(0);
+        onCopyToTempFile = () -> { };
         Map<String, Function<Object[], Object>> overrides = new HashMap<>();
         overrides.put("sendRequest", a -> {
             sendRequests.incrementAndGet();
+            onSendRequest.run();
             return exchange(true);
         });
         overrides.put("add", a -> {
@@ -119,7 +126,7 @@ final class PipelineFixture implements AutoCloseable {
 
             @Override
             public boolean isConfigured() {
-                return true;
+                return providerConfigured.get();
             }
         };
         orchestrator = new AnalysisOrchestrator(api, aiService, aiGate, settings, scanState, counters,
@@ -161,6 +168,7 @@ final class PipelineFixture implements AutoCloseable {
                 "hasResponse", a -> withResponse,
                 "copyToTempFile", a -> {
                     tempFileCopies.incrementAndGet();
+                    onCopyToTempFile.run();
                     return self[0];
                 }));
         return self[0];

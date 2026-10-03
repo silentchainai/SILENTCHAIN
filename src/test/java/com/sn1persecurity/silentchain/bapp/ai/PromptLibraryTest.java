@@ -5,12 +5,14 @@ import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.params.HttpParameterType;
 import burp.api.montoya.http.message.params.ParsedHttpParameter;
 import burp.api.montoya.http.message.requests.HttpRequest;
+import burp.api.montoya.http.message.responses.HttpResponse;
 
 import com.sn1persecurity.silentchain.bapp.data.DataSanitizer;
 import com.sn1persecurity.silentchain.bapp.testutil.DeepStub;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -74,5 +76,50 @@ class PromptLibraryTest {
         assertTrue(shownOther.startsWith("a".repeat(300)));
         assertTrue(shownOther.endsWith("...[truncated 4700 chars]"));
         assertEquals("nginx", PromptLibrary.headerValueForPrompt("Server", "nginx"));
+    }
+
+    @Test
+    void responseCredentialsAndRedactedBodyValuesNeverReachThePrompt() {
+        HttpRequest request = DeepStub.of(HttpRequest.class, Map.of(
+                "url", a -> "https://app.example.org/token",
+                "headerValue", a -> "application/json",
+                "parameters", a -> List.of(param("current", "NESTED-LEAK", HttpParameterType.JSON)),
+                "bodyToString", a -> "{\"password\":{\"current\":\"NESTED-LEAK\"}}"));
+        HttpResponse response = DeepStub.of(HttpResponse.class, Map.of(
+                "headerValue", a -> "application/json",
+                "headers", a -> List.of(header("Set-Cookie", "sid=SC-LEAK; HttpOnly")),
+                "bodyToString", a -> "{\"access_token\":\"AT-LEAK\",\"refresh_token\":\"RT-LEAK\",\"user\":\"bob\"}"));
+        HttpRequestResponse rr = DeepStub.of(HttpRequestResponse.class, Map.of(
+                "request", a -> request, "response", a -> response));
+
+        String prompt = PromptLibrary.buildAnalysisPrompt(rr, new DataSanitizer(false));
+
+        for (String secret : new String[]{"NESTED-LEAK", "AT-LEAK", "RT-LEAK", "SC-LEAK"}) {
+            assertFalse(prompt.contains(secret), "leaked " + secret + ":\n" + prompt);
+        }
+        assertTrue(prompt.contains("HttpOnly"));
+        assertTrue(prompt.contains("bob"));
+    }
+
+    @Test
+    void securityHeadersAreNeverPushedOutByALongHeaderList() {
+        List<HttpHeader> hdrs = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            hdrs.add(header("X-Filler-" + i, "v"));
+        }
+        hdrs.add(header("Content-Security-Policy", "default-src 'self'"));
+        hdrs.add(header("Strict-Transport-Security", "max-age=63072000"));
+
+        String shown = PromptLibrary.headers(hdrs).toString();
+
+        assertTrue(shown.contains("Content-Security-Policy"), shown);
+        assertTrue(shown.contains("Strict-Transport-Security"), shown);
+        assertTrue(shown.contains("more headers omitted"), shown);
+    }
+
+    @Test
+    void cutsAreMarked() {
+        assertEquals("abc", PromptLibrary.capMarked("abc", 5));
+        assertEquals("abcde ...[truncated 3 chars]", PromptLibrary.capMarked("abcdefgh", 5));
     }
 }

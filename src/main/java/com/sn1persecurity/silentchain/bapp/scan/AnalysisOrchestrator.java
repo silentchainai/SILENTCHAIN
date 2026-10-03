@@ -163,10 +163,16 @@ public class AnalysisOrchestrator {
         int cancelled = taskRegistry.cancelAll();
         Job job;
         while ((job = parkedJobs.poll()) != null) {
+            job.task().finish(TaskStatus.CANCELLED);   // also a task created after the registry pass
             abandon(job);
             releaseSlots(job);
         }
         return cancelled;
+    }
+
+    /** Free job slots (tests). */
+    int availableJobSlots() {
+        return jobSlots.availablePermits();
     }
 
     /** Re-queue work parked while tasks were paused (wired to ScanState's resume hook). */
@@ -218,11 +224,19 @@ public class AnalysisOrchestrator {
         boolean parked = false;
         boolean reachedAi = false;
         try {
-            if (scanState.isPaused() && task.park()) {
+            if (scanState.isPaused() && !lifecycle.isUnloading() && task.park()) {
                 // Parked work may wait indefinitely: keep the exchange on disk, not the heap.
                 Job toPark = job.passive() ? job : job.withExchange(job.rr().copyToTempFile());
                 parkedJobs.add(toPark);
                 parked = true;
+                // Cancel All or unload may have run between park() and add(): their drain did not
+                // see this job, so take it back (remove() claims it at most once) and end it here.
+                if ((task.status().isTerminal() || lifecycle.isUnloading()) && parkedJobs.remove(toPark)) {
+                    task.finish(TaskStatus.CANCELLED);
+                    abandon(toPark);
+                    releaseSlots(toPark);
+                    return;
+                }
                 if (!scanState.isPaused()) {
                     resumeParked();    // resumed while this job was being parked
                 }
@@ -231,12 +245,13 @@ public class AnalysisOrchestrator {
             if (!task.tryStart()) {
                 return;                // cancelled while queued
             }
-            if (stopRequested(job) || !aiEnabled(job) || !stillInScope(job)) {
+            if (stopRequested(job) || !aiReady(job) || !stillInScope(job)) {
                 return;
             }
             HttpRequestResponse resolved = job.allowFetch() ? ensureResponse(job.rr(), job.trigger()) : job.rr();
 
-            if (stopRequested(job) || !aiEnabled(job)) {
+            // The fetch can take up to the request timeout: re-check everything, scope included.
+            if (stopRequested(job) || !aiReady(job) || !stillInScope(job)) {
                 return;
             }
             DataSanitizer sanitizer = new DataSanitizer(settings.sanitizerEnabled());
@@ -309,12 +324,17 @@ public class AnalysisOrchestrator {
         return false;
     }
 
-    /** False (and the task is skipped) if AI was disabled for the extension since the job was queued. */
-    private boolean aiEnabled(Job job) {
-        if (aiGate.isEnabled()) {
+    /**
+     * False (and the task is skipped) if AI was disabled for the extension, or the
+     * provider is no longer configured, since the job was queued: nothing would be
+     * sent, so the job must not count as analyzed.
+     */
+    private boolean aiReady(Job job) {
+        if (aiGate.isEnabled() && aiService.isConfigured()) {
             return true;
         }
         job.task().finish(TaskStatus.SKIPPED);
+        scanState.debug("SILENTCHAIN [" + job.trigger() + "]: skipped, AI is disabled or the provider is not configured.");
         return false;
     }
 

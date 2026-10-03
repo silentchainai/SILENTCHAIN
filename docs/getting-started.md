@@ -39,7 +39,8 @@ vulnerabilities using LLM-based analysis of request/response pairs.
 ## Data Privacy
 
 Credentials (cookie values, `Authorization` and API-key/token header values, and parameters or
-JSON fields named like credentials) are always replaced with `[REDACTED]` before any AI request. The built-in DataSanitizer
+JSON fields named like credentials, in requests and responses) are always replaced with `[REDACTED]`
+before any AI request. The built-in DataSanitizer
 additionally redacts sensitive data (API keys, credentials, PII, internal IPs) and neutralizes
 prompt-injection patterns before prompts are sent to any provider. It is enabled by default
 and can be toggled in SILENTCHAIN's settings (**Advanced** tab). Burp AI sends prompts through

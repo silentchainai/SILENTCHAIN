@@ -15,6 +15,8 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -26,11 +28,23 @@ public class PromptLibrary {
     // findings: a structured, parameter-forward summary instead of a raw dump.
     private static final int MAX_PARAMS_SAMPLE = 5;
     private static final int MAX_PARAM_VALUE_CHARS = 150;
-    private static final int MAX_HEADERS = 10;
+    private static final int MAX_HEADERS = 16;
+    private static final int MAX_HEADER_LIST_CHARS = 6_000;
     private static final int MAX_REQUEST_BODY_CHARS = 2_000;
     private static final int MAX_RESPONSE_BODY_CHARS = 3_000;
     private static final int MAX_HEADER_VALUE_CHARS = 300;
     private static final int MAX_POLICY_HEADER_CHARS = 2_000;
+
+    /**
+     * Headers listed before all others (so a long header list never pushes them
+     * out): the ones the model judges security posture from.
+     */
+    private static final Set<String> PRIORITY_HEADERS = Set.of(
+            "content-security-policy", "content-security-policy-report-only", "strict-transport-security",
+            "permissions-policy", "set-cookie", "x-frame-options", "x-content-type-options", "referrer-policy",
+            "cross-origin-opener-policy", "cross-origin-embedder-policy", "cross-origin-resource-policy",
+            "server", "x-powered-by", "cookie", "authorization", "origin", "referer", "content-type",
+            "location", "www-authenticate", "cache-control");
 
     /** Security-policy headers the model must see in full to judge them (CSP etc.). */
     private static final Set<String> POLICY_HEADERS = Set.of(
@@ -66,6 +80,13 @@ public class PromptLibrary {
         data.put("status", resp != null ? (int) resp.statusCode() : 0);
         data.put("mime_type", resp != null ? String.valueOf(resp.statedMimeType()) : "");
 
+        // --- request body first: values it redacts are hidden in params_sample too ---
+        Set<String> redactedValues = new HashSet<>();
+        String requestBody = req != null
+                ? capMarked(CredentialRedactor.redactRequestBody(
+                        req.bodyToString(), req.headerValue("Content-Type"), redactedValues), MAX_REQUEST_BODY_CHARS)
+                : "";
+
         // --- parameters: explicit name/value/type sample, total count ---
         JSONArray paramsSample = new JSONArray();
         int paramsCount = 0;
@@ -76,26 +97,32 @@ public class PromptLibrary {
                 if (paramsSample.length() >= MAX_PARAMS_SAMPLE) {
                     break;
                 }
+                String value = redactedValues.contains(p.value())
+                        ? CredentialRedactor.REDACTED
+                        : CredentialRedactor.redactParameterValue(
+                                p.name(), p.value(), p.type() == HttpParameterType.COOKIE);
                 JSONObject pj = new JSONObject();
                 pj.put("name", p.name());
-                pj.put("value", cap(CredentialRedactor.redactParameterValue(
-                        p.name(), p.value(), p.type() == HttpParameterType.COOKIE), MAX_PARAM_VALUE_CHARS));
+                pj.put("value", capMarked(value, MAX_PARAM_VALUE_CHARS));
                 pj.put("type", String.valueOf(p.type()));
                 paramsSample.put(pj);
             }
         }
         data.put("params_count", paramsCount);
         data.put("params_sample", paramsSample);
+        if (paramsCount > paramsSample.length()) {
+            data.put("params_omitted", paramsCount - paramsSample.length());
+        }
 
         // --- request ---
         data.put("request_headers", headers(req != null ? req.headers() : null));
-        data.put("request_body", req != null
-                ? CredentialRedactor.redactBody(cap(req.bodyToString(), MAX_REQUEST_BODY_CHARS)) : "");
+        data.put("request_body", requestBody);
 
         // --- response ---
         if (resp != null) {
             data.put("response_headers", headers(resp.headers()));
-            data.put("response_body", cap(resp.bodyToString(), MAX_RESPONSE_BODY_CHARS));
+            data.put("response_body", capMarked(CredentialRedactor.redactResponseBody(
+                    resp.bodyToString(), resp.headerValue("Content-Type")), MAX_RESPONSE_BODY_CHARS));
         } else {
             // Marker so the model never silently analyzes a request with no
             // response (the orchestrator normally fetches one via ensureResponse).
@@ -114,21 +141,50 @@ public class PromptLibrary {
     }
 
     /**
-     * First {@link #MAX_HEADERS} headers as a JSON array of "Name: value" strings,
-     * with credential values redacted and long values capped.
+     * Up to {@link #MAX_HEADERS} headers as "Name: value" strings, credential
+     * values redacted and long values capped. Security-relevant headers come
+     * first so a long header list cannot push them out, and anything left out
+     * is reported in a final "[N more headers omitted]" entry.
      */
-    private static JSONArray headers(List<HttpHeader> hdrs) {
+    static JSONArray headers(List<HttpHeader> hdrs) {
         JSONArray arr = new JSONArray();
         if (hdrs == null) {
             return arr;
         }
+        List<HttpHeader> ordered = new ArrayList<>(hdrs.size());
         for (HttpHeader h : hdrs) {
-            if (arr.length() >= MAX_HEADERS) {
-                break;
+            if (isPriorityHeader(h.name())) {
+                ordered.add(h);
             }
-            arr.put(h.name() + ": " + headerValueForPrompt(h.name(), h.value()));
+        }
+        for (HttpHeader h : hdrs) {
+            if (!isPriorityHeader(h.name())) {
+                ordered.add(h);
+            }
+        }
+        int chars = 0;
+        int omitted = 0;
+        for (HttpHeader h : ordered) {
+            String line = h.name() + ": " + headerValueForPrompt(h.name(), h.value());
+            if (arr.length() >= MAX_HEADERS || chars + line.length() > MAX_HEADER_LIST_CHARS) {
+                omitted++;
+                continue;
+            }
+            arr.put(line);
+            chars += line.length();
+        }
+        if (omitted > 0) {
+            arr.put("[" + omitted + " more headers omitted]");
         }
         return arr;
+    }
+
+    private static boolean isPriorityHeader(String name) {
+        if (name == null) {
+            return false;
+        }
+        String lower = name.trim().toLowerCase(Locale.ROOT);
+        return PRIORITY_HEADERS.contains(lower) || lower.startsWith("access-control-");
     }
 
     /**
@@ -145,11 +201,12 @@ public class PromptLibrary {
         return redacted.substring(0, max) + " ...[truncated " + (redacted.length() - max) + " chars]";
     }
 
-    private static String cap(String s, int max) {
+    /** Cut to {@code max} chars with a visible marker, so a cut is never mistaken for missing content. */
+    static String capMarked(String s, int max) {
         if (s == null) {
             return "";
         }
-        return s.length() <= max ? s : s.substring(0, max);
+        return s.length() <= max ? s : s.substring(0, max) + " ...[truncated " + (s.length() - max) + " chars]";
     }
 
     private static String loadSystemPrompt() {
@@ -171,6 +228,9 @@ public class PromptLibrary {
                 "on state-changing forms, security misconfiguration, and sensitive-data/version " +
                 "disclosure. Report a suspected issue at a lower confidence (50-74) rather than " +
                 "omitting it; reserve 90+ for exploits observable in the traffic. " +
+                "Values shown as [REDACTED] were removed by SILENTCHAIN before sending: never report them as " +
+                "missing or empty. Content marked as truncated or omitted was cut for length: never report " +
+                "a header, cookie flag, form field or closing tag as missing because of such a cut. " +
                 "Output ONLY a JSON object {\"findings\":[...]} whose array holds finding objects " +
                 "with fields: title, severity " +
                 "(High|Medium|Low|Information), confidence (50-100), cwe, owasp, detail, " +
