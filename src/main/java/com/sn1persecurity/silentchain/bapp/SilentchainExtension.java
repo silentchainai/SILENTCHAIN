@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class SilentchainExtension implements BurpExtension {
 
     public static final String EXTENSION_NAME = "SILENTCHAIN Community Edition";
-    public static final String EXTENSION_VERSION = "1.4.0";
+    public static final String EXTENSION_VERSION = "1.4.1";
 
     @Override
     public void initialize(MontoyaApi api) {

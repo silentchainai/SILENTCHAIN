@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.4.1] - 2026-10-03
+
+### Summary
+- BApp review #244 point 1: passive AI findings returned via AuditResult (bounded wait, site-map fallback), consolidateIssues
+
 BApp Store review follow-up (extension-portal issue #244, point 1): passive findings now go through Burp Scanner's own pipeline.
 
 ### Changed
