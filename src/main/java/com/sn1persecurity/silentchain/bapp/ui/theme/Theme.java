@@ -17,11 +17,11 @@ public final class Theme {
     public static final Color SCAN_GREEN    = new Color(0x00, 0x96, 0x00); // scanning active
     public static final Color SCAN_RED      = new Color(0xCC, 0x00, 0x00); // scanning inactive
 
-    // Console — dark
+    // Console - dark
     public static final Color CONSOLE_DARK_BG   = new Color(0x32, 0x33, 0x34);
     public static final Color CONSOLE_DARK_TEXT = new Color(0x7D, 0xA3, 0x58);
 
-    // Console — light
+    // Console - light
     public static final Color CONSOLE_LIGHT_BG   = Color.WHITE;
     public static final Color CONSOLE_LIGHT_TEXT = new Color(0x36, 0x45, 0x4F);
 

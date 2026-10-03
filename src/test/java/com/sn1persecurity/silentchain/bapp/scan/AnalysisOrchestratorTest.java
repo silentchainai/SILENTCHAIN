@@ -8,12 +8,19 @@ import com.sn1persecurity.silentchain.bapp.util.ThreadPool;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AnalysisOrchestratorTest {
@@ -37,7 +44,8 @@ class AnalysisOrchestratorTest {
     /** Admit and queue one passive job the way AiPassiveScanCheck does. */
     private boolean queuePassive(boolean withResponse) {
         assertTrue(f.orchestrator.tryAdmitPassive());
-        return f.orchestrator.analyzePassive(PipelineFixture.exchange(withResponse), abandoned::incrementAndGet);
+        return f.orchestrator.analyzePassive(PipelineFixture.exchange(withResponse), abandoned::incrementAndGet,
+                false) != null;
     }
 
     /**
@@ -323,5 +331,95 @@ class AnalysisOrchestratorTest {
         assertEquals(0, f.counters.errors());
         assertEquals(1, abandoned.get());
         assertTrue(f.allPassiveSlotsFree());
+    }
+
+    // ---- Result handoff (review #244 point 1) -------------------------------
+
+    @Test
+    void waitingJobHandsItsIssuesToTheHandoff() {
+        f.analyzer = p -> Optional.of(ONE_FINDING);
+        assertTrue(f.orchestrator.tryAdmitPassive());
+
+        ResultHandoff handoff = f.orchestrator.analyzePassive(PipelineFixture.exchange(true),
+                abandoned::incrementAndGet, true);
+
+        assertNotNull(handoff);
+        assertEquals(1, handoff.await(0).size());
+        assertTrue(f.siteMapAdds.isEmpty());
+        assertEquals(1, f.findings.snapshot().size());
+        assertEquals(TaskStatus.COMPLETED, onlyTask().status());
+        assertTrue(f.allPassiveSlotsFree());
+    }
+
+    /** However a job ends without issues, its waiter gets an empty result at once. */
+    @Test
+    void everyEarlyEndReleasesTheHandoff() {
+        Map<String, Function<String, Optional<String>>> endings = Map.of(
+                "no findings", p -> Optional.of("{\"findings\":[]}"),
+                "below the confidence floor", p -> Optional.of(ONE_FINDING.replace("92", "10")),
+                "no result", p -> Optional.empty(),
+                "not sent", p -> { throw new AiNotSentException("AI disabled"); },
+                "provider failure", p -> { throw new IllegalStateException("boom"); });
+        for (Map.Entry<String, Function<String, Optional<String>>> ending : endings.entrySet()) {
+            f.analyzer = ending.getValue();
+            assertTrue(f.orchestrator.tryAdmitPassive());
+
+            ResultHandoff handoff = f.orchestrator.analyzePassive(PipelineFixture.exchange(true),
+                    abandoned::incrementAndGet, true);
+
+            List<?> got = assertTimeout(Duration.ofSeconds(2), () -> handoff.await(10_000), ending.getKey());
+            assertTrue(got.isEmpty(), ending.getKey());
+        }
+        assertTrue(f.siteMapAdds.isEmpty());
+        assertTrue(f.allPassiveSlotsFree());
+    }
+
+    @Test
+    void outOfScopeJobReleasesTheHandoff() {
+        f.inScope.set(false);
+        assertTrue(f.orchestrator.tryAdmitPassive());
+
+        ResultHandoff handoff = f.orchestrator.analyzePassive(PipelineFixture.exchange(true),
+                abandoned::incrementAndGet, true);
+
+        assertTrue(assertTimeout(Duration.ofSeconds(2), () -> handoff.await(10_000)).isEmpty());
+        assertEquals(TaskStatus.SKIPPED, onlyTask().status());
+    }
+
+    @Test
+    void fullQueueReturnsNoHandoff() {
+        f.rejectAll = true;
+        assertTrue(f.orchestrator.tryAdmitPassive());
+
+        assertNull(f.orchestrator.analyzePassive(PipelineFixture.exchange(true),
+                abandoned::incrementAndGet, true));
+        assertEquals(TaskStatus.CANCELLED, onlyTask().status());
+        assertTrue(f.allPassiveSlotsFree());
+    }
+
+    @Test
+    void passiveCanStartNowOnlyWithoutAQueue() {
+        f.defer = true;
+        assertTrue(f.orchestrator.passiveCanStartNow());
+
+        f.orchestrator.analyzeOnDemand(PipelineFixture.exchange(true));
+        f.orchestrator.analyzeOnDemand(PipelineFixture.exchange(true));
+        assertTrue(f.orchestrator.passiveCanStartNow(), "two jobs fit on the two analysis threads");
+
+        f.orchestrator.analyzeOnDemand(PipelineFixture.exchange(true));
+        assertFalse(f.orchestrator.passiveCanStartNow());
+
+        f.runDeferred();
+        assertTrue(f.orchestrator.passiveCanStartNow());
+    }
+
+    /** Right-click analysis is not a scan check: its issues always go to the site map. */
+    @Test
+    void onDemandIssuesAlwaysGoToTheSiteMap() {
+        f.analyzer = p -> Optional.of(ONE_FINDING);
+
+        f.orchestrator.analyzeOnDemand(PipelineFixture.exchange(true));
+
+        assertEquals(1, f.siteMapAdds.size());
     }
 }

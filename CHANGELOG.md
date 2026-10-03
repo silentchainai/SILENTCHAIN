@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+BApp Store review follow-up (extension-portal issue #244, point 1): passive findings now go through Burp Scanner's own pipeline.
+
+### Changed
+- The passive scan check now returns the AI findings in its `AuditResult`, so Burp Scanner reports and consolidates them, instead of returning an empty result and adding them with `api.siteMap().add()`. The scanner thread waits for the result only when the analysis can start at once (no more scanner threads wait than the 2 analysis threads) and for at most 60 seconds, because an LLM round trip takes seconds and Burp AI prompts have no timeout.
+- A passive result that completes after the check stopped waiting (timeout, item queued behind other analyses, tasks paused, scanner thread interrupted) is added with `api.siteMap().add()` instead of being discarded. A single compare-and-set decides which path reports it, so each finding is reported exactly once.
+- A waiting scanner thread is released as soon as its job ends without findings, is skipped, fails, is cancelled (including Cancel All) or parked, or the extension unloads; a full queue never waits.
+- `consolidateIssues()`: a finding reported again with the same name for the same URL keeps the existing issue.
+- Right-click **Analyze Request (SILENTCHAIN)** is unchanged: it is not a scan check, so its findings are added with `api.siteMap().add()`.
+- Issue details and task diagnostics use a hyphen instead of an em-dash (for example in the OWASP line).
+
 ---
 
 ## [1.4.0] - 2026-10-02

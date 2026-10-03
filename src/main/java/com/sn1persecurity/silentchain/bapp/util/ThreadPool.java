@@ -31,7 +31,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class ThreadPool {
 
-    private static final int ANALYSIS_THREADS = 2;
+    /** Analysis worker threads; also the most passive scan checks that wait for a result at once. */
+    public static final int ANALYSIS_THREADS = 2;
     /** Analysis queue capacity; also the orchestrator's limit on outstanding jobs. */
     public static final int ANALYSIS_QUEUE = 128;
     private static final int INTERACTIVE_QUEUE = 8;

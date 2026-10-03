@@ -24,6 +24,7 @@ import com.sn1persecurity.silentchain.bapp.state.TaskStatus;
 import com.sn1persecurity.silentchain.bapp.util.Lifecycle;
 import com.sn1persecurity.silentchain.bapp.util.ThreadPool;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Queue;
@@ -33,6 +34,10 @@ import java.util.concurrent.Semaphore;
 /**
  * Single source of truth for the AI analysis pipeline:
  * sanitize -> prompt -> AI provider -> restore -> parse -> AuditIssue + table row.
+ * Each job's issues are handed to the passive scan check waiting for them (and
+ * so returned to Burp Scanner in its {@code AuditResult}); when nobody is
+ * waiting they are added with {@code api.siteMap().add()}. Exactly one of the
+ * two happens ({@link ResultHandoff}).
  *
  * Two entry points:
  * <ul>
@@ -40,7 +45,8 @@ import java.util.concurrent.Semaphore;
  *       anything to the scanned host: a passive scan check must not generate
  *       target traffic, even indirectly through this queue.</li>
  *   <li>{@link #analyzeOnDemand} - from the user's context-menu action. May send
- *       the request once to capture a missing response.</li>
+ *       the request once to capture a missing response. Not a scan check, so its
+ *       issues always go to the site map.</li>
  * </ul>
  *
  * Each job runs on the analysis pool inside try/catch/finally, so it always ends
@@ -62,13 +68,17 @@ public class AnalysisOrchestrator {
     /**
      * One analysis. {@code onAbandoned} (passive jobs: hand back the ScanGate
      * reservation) runs if the job ends without reaching the AI provider.
+     * {@code handoff} receives the issues if a scan check is still waiting.
      */
     private record Job(HttpRequestResponse rr, String trigger, boolean passive, boolean allowFetch,
-                       ScanTask task, Runnable onAbandoned) {
+                       ScanTask task, Runnable onAbandoned, ResultHandoff handoff) {
         Job withExchange(HttpRequestResponse other) {
-            return new Job(other, trigger, passive, allowFetch, task, onAbandoned);
+            return new Job(other, trigger, passive, allowFetch, task, onAbandoned, handoff);
         }
     }
+
+    /** An issue built from one AI finding, kept with its source for the table row. */
+    private record BuiltIssue(ParsedFinding finding, AuditIssue issue) {}
 
     private final MontoyaApi api;
     private final AiService aiService;
@@ -133,16 +143,33 @@ public class AnalysisOrchestrator {
     }
 
     /**
+     * True if every outstanding job, including one just admitted, fits on the
+     * analysis threads, i.e. a newly queued job starts at once. Only then is it
+     * worth holding a Burp scanner thread for the result: a job queued behind
+     * others would mostly outlast the wait. Conservative (parked work counts).
+     */
+    boolean passiveCanStartNow() {
+        return ThreadPool.ANALYSIS_QUEUE - jobSlots.availablePermits() <= ThreadPool.ANALYSIS_THREADS;
+    }
+
+    /**
      * Queue a passive analysis. The caller must hold a slot from
      * {@link #tryAdmitPassive}; ownership of the slot passes to the job.
      * The exchange must already have its response: this path never fetches one.
      *
      * @param onAbandoned run if the job ends without reaching the AI provider
-     * @return false if the analysis queue was full (the slot is released).
+     * @param awaitResult the caller will wait for the issues: it MUST then call
+     *                    {@link ResultHandoff#await} on the returned handoff exactly once
+     * @return the job's handoff ({@link ResultHandoff#none()} unless awaitResult),
+     *         or null if the analysis queue was full (the slot is released).
      */
-    public boolean analyzePassive(HttpRequestResponse rr, Runnable onAbandoned) {
-        return submitOrDrop(new Job(rr, TRIGGER_PASSIVE, true, false,
-                taskRegistry.newTask(TRIGGER_PASSIVE, safeUrl(rr)), onAbandoned));
+    ResultHandoff analyzePassive(HttpRequestResponse rr, Runnable onAbandoned, boolean awaitResult) {
+        ScanTask task = taskRegistry.newTask(TRIGGER_PASSIVE, safeUrl(rr));
+        ResultHandoff handoff = awaitResult
+                ? new ResultHandoff(() -> lifecycle.isUnloading() || task.status().isTerminal())
+                : ResultHandoff.none();
+        boolean queued = submitOrDrop(new Job(rr, TRIGGER_PASSIVE, true, false, task, onAbandoned, handoff));
+        return queued ? handoff : null;
     }
 
     /**
@@ -156,7 +183,7 @@ public class AnalysisOrchestrator {
             return false;
         }
         return submitOrDrop(new Job(rr, TRIGGER_ON_DEMAND, false, true,
-                taskRegistry.newTask(TRIGGER_ON_DEMAND, safeUrl(rr)), null));
+                taskRegistry.newTask(TRIGGER_ON_DEMAND, safeUrl(rr)), null, ResultHandoff.none()));
     }
 
     /** Cancel every task, including work parked while paused. Returns the number cancelled. */
@@ -164,9 +191,7 @@ public class AnalysisOrchestrator {
         int cancelled = taskRegistry.cancelAll();
         Job job;
         while ((job = parkedJobs.poll()) != null) {
-            job.task().finish(TaskStatus.CANCELLED);   // also a task created after the registry pass
-            abandon(job);
-            releaseSlots(job);
+            drop(job);   // also a task created after the registry pass
         }
         return cancelled;
     }
@@ -194,10 +219,16 @@ public class AnalysisOrchestrator {
         if (threadPool.submitAnalysis("analysis (" + job.trigger() + ")", () -> runJob(job))) {
             return true;
         }
+        drop(job);
+        return false;
+    }
+
+    /** End a job that will not run: cancel its task, free any waiter, hand back its slots. */
+    private void drop(Job job) {
         job.task().finish(TaskStatus.CANCELLED);
+        job.handoff().release();
         abandon(job);
         releaseSlots(job);
-        return false;
     }
 
     private void releaseSlots(Job job) {
@@ -233,9 +264,7 @@ public class AnalysisOrchestrator {
                 // Cancel All or unload may have run between park() and add(): their drain did not
                 // see this job, so take it back (remove() claims it at most once) and end it here.
                 if ((task.status().isTerminal() || lifecycle.isUnloading()) && parkedJobs.remove(toPark)) {
-                    task.finish(TaskStatus.CANCELLED);
-                    abandon(toPark);
-                    releaseSlots(toPark);
+                    drop(toPark);
                     return;
                 }
                 if (!scanState.isPaused()) {
@@ -284,6 +313,9 @@ public class AnalysisOrchestrator {
                 scanState.console("[ERROR] " + message + ": " + t);
             }
         } finally {
+            // Whatever happened, nothing more is coming for a waiting scan check now. A parked
+            // job runs later, after its waiter has gone, and so reports through the site map.
+            job.handoff().release();
             if (!parked) {
                 task.finish(TaskStatus.ERROR);   // no-op when a terminal status was already set
                 if (!reachedAi) {
@@ -399,7 +431,7 @@ public class AnalysisOrchestrator {
             return;
         }
 
-        int created = 0;
+        List<BuiltIssue> built = new ArrayList<>();
         for (ParsedFinding f : findings) {
             if (task.isCancelled() || lifecycle.isUnloading()) {
                 break;
@@ -409,28 +441,42 @@ public class AnalysisOrchestrator {
                 continue;
             }
             try {
-                AuditIssue issue = FindingBuilder.build(f, rr);
-                api.siteMap().add(issue);
-
-                findingsRegistry.add(new FindingRow(
-                        url,
-                        f.title(),
-                        normalizeSeverity(f.severityRaw()),
-                        confidenceLabel(f.confidence())
-                ));
-                counters.incFindingsCreated();
-                created++;
-
-                scanState.info("SILENTCHAIN [" + trigger + "] finding: ["
-                        + normalizeSeverity(f.severityRaw()) + " / " + f.confidence() + "%] "
-                        + f.title() + " (" + f.owasp().code() + ") at " + url);
+                built.add(new BuiltIssue(f, FindingBuilder.build(f, rr)));
             } catch (Throwable t) {
-                counters.incErrors();
-                api.logging().logToError("SILENTCHAIN: failed to add finding for " + url, t);
-                scanState.console("[ERROR] Failed to add SILENTCHAIN finding: " + t.getMessage());
+                reportAddFailure(url, t);
             }
         }
+        if (cancelledOrUnloading(job)) {
+            return;
+        }
 
+        // Hand the issues to the passive scan check still waiting for them (Burp Scanner
+        // then reports and consolidates them); otherwise add them to the site map.
+        List<BuiltIssue> reported = built;
+        String via = "the scanner result";
+        if (!built.isEmpty() && !job.handoff().deliver(issuesOf(built))) {
+            if (cancelledOrUnloading(job)) {
+                return;                        // the waiter may have left because of Cancel All
+            }
+            via = "the site map";
+            reported = addToSiteMap(built, task, url);
+        }
+
+        for (BuiltIssue b : reported) {
+            ParsedFinding f = b.finding();
+            findingsRegistry.add(new FindingRow(
+                    url,
+                    f.title(),
+                    normalizeSeverity(f.severityRaw()),
+                    confidenceLabel(f.confidence())
+            ));
+            counters.incFindingsCreated();
+            scanState.info("SILENTCHAIN [" + trigger + "] finding: ["
+                    + normalizeSeverity(f.severityRaw()) + " / " + f.confidence() + "%] "
+                    + f.title() + " (" + f.owasp().code() + ") at " + url);
+        }
+
+        // Only after the handoff: a waiting scan check reads a finished task as "nothing coming".
         task.finish(TaskStatus.COMPLETED);
 
         if (sanitizer.injectionDetected()) {
@@ -438,7 +484,38 @@ public class AnalysisOrchestrator {
                     + url + " (" + sanitizer.injectionSummary() + ").");
         }
 
-        scanState.debug("SILENTCHAIN [" + trigger + "]: " + created + " finding(s) created for " + url);
+        scanState.debug("SILENTCHAIN [" + trigger + "]: " + reported.size() + " finding(s) created for " + url
+                + (reported.isEmpty() ? "" : " (reported via " + via + ")"));
+    }
+
+    private List<BuiltIssue> addToSiteMap(List<BuiltIssue> built, ScanTask task, String url) {
+        List<BuiltIssue> added = new ArrayList<>();
+        for (BuiltIssue b : built) {
+            if (task.isCancelled() || lifecycle.isUnloading()) {
+                break;
+            }
+            try {
+                api.siteMap().add(b.issue());
+                added.add(b);
+            } catch (Throwable t) {
+                reportAddFailure(url, t);
+            }
+        }
+        return added;
+    }
+
+    private void reportAddFailure(String url, Throwable t) {
+        counters.incErrors();
+        api.logging().logToError("SILENTCHAIN: failed to add finding for " + url, t);
+        scanState.console("[ERROR] Failed to add SILENTCHAIN finding: " + t.getMessage());
+    }
+
+    private static List<AuditIssue> issuesOf(List<BuiltIssue> built) {
+        List<AuditIssue> issues = new ArrayList<>(built.size());
+        for (BuiltIssue b : built) {
+            issues.add(b.issue());
+        }
+        return issues;
     }
 
     static String normalizeSeverity(String raw) {

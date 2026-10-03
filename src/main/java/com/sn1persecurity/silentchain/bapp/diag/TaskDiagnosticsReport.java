@@ -40,13 +40,13 @@ public final class TaskDiagnosticsReport {
         sb.append("Queued                    : ").append(queued).append('\n');
 
         if (queued > 0 && active == 0) {
-            sb.append("NOTE: tasks are queued but none are active — the worker pool may be ")
+            sb.append("NOTE: tasks are queued but none are active - the worker pool may be ")
               .append("saturated or the AI provider may be slow/unreachable. Check the ")
               .append("Settings -> AI Provider -> Test Connection result.\n");
         }
         if (counts.get(TaskStatus.ERROR) > 0) {
             sb.append("NOTE: ").append(counts.get(TaskStatus.ERROR))
-              .append(" task(s) ended in ERROR — check provider credentials / credits / connectivity.\n");
+              .append(" task(s) ended in ERROR - check provider credentials / credits / connectivity.\n");
         }
         sb.append("========================================");
         return sb.toString();

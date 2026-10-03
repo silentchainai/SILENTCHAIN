@@ -264,7 +264,7 @@ Burp AI credits from your account.
 
 ### How It Works
 
-1. **Burp Scanner passive check**: Burp's live audit tasks and scans (for example Burp's default live passive audit of Proxy traffic) hand each audited request/response to SILENTCHAIN's passive scan check, which returns immediately and queues the item in the background. The passive check never sends requests to the target. Burp scans and crawls also feed in-scope items, so AI usage can rise during scans.
+1. **Burp Scanner passive check**: Burp's live audit tasks and scans (for example Burp's default live passive audit of Proxy traffic) hand each audited request/response to SILENTCHAIN's passive scan check. When no other analysis is queued, the check waits up to 60 seconds and returns the findings to Burp Scanner; otherwise the findings are added to Burp's issues when the analysis completes. The passive check never sends requests to the target. Burp scans and crawls also feed in-scope items, so AI usage can rise during scans.
 2. **Scope Filtering**: Passive analysis only covers in-scope targets (configure in Burp's Target Scope), and only runs while SILENTCHAIN's passive analysis is ON and its tasks are not paused
 3. **Throttling**: Per-URL de-duplication, a per-host rate limit (default 10/min) and a passive backlog cap (16) bound how much traffic reaches the AI
 4. **AI Analysis**: Sends a capped, redacted summary of the request/response to the selected provider, only when **Use AI** is enabled for SILENTCHAIN in Burp

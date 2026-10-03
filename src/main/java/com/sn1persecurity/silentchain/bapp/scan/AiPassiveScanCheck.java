@@ -3,6 +3,8 @@ package com.sn1persecurity.silentchain.bapp.scan;
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.scanner.AuditResult;
+import burp.api.montoya.scanner.ConsolidationAction;
+import burp.api.montoya.scanner.audit.issues.AuditIssue;
 import burp.api.montoya.scanner.scancheck.PassiveScanCheck;
 
 import com.sn1persecurity.silentchain.bapp.ai.AiGate;
@@ -13,6 +15,7 @@ import com.sn1persecurity.silentchain.bapp.state.ScanState;
 import com.sn1persecurity.silentchain.bapp.util.Lifecycle;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -22,11 +25,18 @@ import java.util.concurrent.atomic.AtomicLong;
  * reaches it.
  *
  * Contract:
- *   - Returns immediately with an empty {@link AuditResult}. An LLM round trip
- *     takes seconds (and Burp AI prompts have no timeout), so blocking a
- *     scanner thread on it would stall Burp's audit; instead the exchange is
- *     handed to a bounded background queue and AI findings are added to the
- *     site map when the analysis completes.
+ *   - Returns the AI findings in its {@link AuditResult}, so Burp Scanner
+ *     reports and consolidates them. The exchange is analyzed on the
+ *     extension's bounded analysis pool; the scanner thread waits for the
+ *     result only when the analysis can start at once (so no more scanner
+ *     threads wait than there are analysis threads) and for at most
+ *     {@link #RESULT_WAIT_MILLIS}, because an LLM round trip takes seconds and
+ *     Burp AI prompts have no timeout. It stops waiting at once if the job is
+ *     cancelled, parked (tasks paused) or the extension unloads.
+ *   - A result that arrives after the check stopped waiting (or for an item
+ *     that had to queue) is added with {@code api.siteMap().add()} instead of
+ *     being discarded, since the AI call has been paid for. Each result is
+ *     reported exactly once ({@link ResultHandoff}).
  *   - NEVER causes traffic to the scanned host. Exchanges without a response
  *     are skipped, and the passive path through {@link AnalysisOrchestrator}
  *     cannot fetch one.
@@ -38,6 +48,9 @@ public class AiPassiveScanCheck implements PassiveScanCheck {
 
     static final String CHECK_NAME = "SILENTCHAIN AI passive analysis";
 
+    /** Longest a scanner thread waits for an analysis that started at once. */
+    static final long RESULT_WAIT_MILLIS = 60_000L;
+
     private final MontoyaApi api;
     private final ScanGate gate;
     private final AiGate aiGate;
@@ -47,12 +60,21 @@ public class AiPassiveScanCheck implements PassiveScanCheck {
     private final ScanState scanState;
     private final Counters counters;
     private final Lifecycle lifecycle;
+    private final long resultWaitMillis;
 
     private final AtomicLong lastCallbackMillis = new AtomicLong();
 
     public AiPassiveScanCheck(MontoyaApi api, ScanGate gate, AiGate aiGate, AiService aiService,
                               AnalysisOrchestrator orchestrator, Settings settings, ScanState scanState,
                               Counters counters, Lifecycle lifecycle) {
+        this(api, gate, aiGate, aiService, orchestrator, settings, scanState, counters, lifecycle,
+                RESULT_WAIT_MILLIS);
+    }
+
+    /** As the public constructor, with a different wait budget (tests). */
+    AiPassiveScanCheck(MontoyaApi api, ScanGate gate, AiGate aiGate, AiService aiService,
+                       AnalysisOrchestrator orchestrator, Settings settings, ScanState scanState,
+                       Counters counters, Lifecycle lifecycle, long resultWaitMillis) {
         this.api = api;
         this.gate = gate;
         this.aiGate = aiGate;
@@ -62,6 +84,7 @@ public class AiPassiveScanCheck implements PassiveScanCheck {
         this.scanState = scanState;
         this.counters = counters;
         this.lifecycle = lifecycle;
+        this.resultWaitMillis = resultWaitMillis;
     }
 
     @Override
@@ -71,14 +94,33 @@ public class AiPassiveScanCheck implements PassiveScanCheck {
 
     @Override
     public AuditResult doCheck(HttpRequestResponse requestResponse) {
+        ResultHandoff handoff = null;
         try {
-            consider(requestResponse);
+            handoff = consider(requestResponse);
         } catch (Throwable t) {
             if (!lifecycle.isUnloading()) {
                 api.logging().logToError("SILENTCHAIN passive check failed", t);
             }
         }
-        return AuditResult.auditResult(List.of());
+        // Nothing in consider() can throw once a job is queued, so a handoff
+        // the job may deliver to is always awaited (and so detached) here.
+        List<AuditIssue> issues = handoff != null ? handoff.await(resultWaitMillis) : List.of();
+        return AuditResult.auditResult(issues);
+    }
+
+    /**
+     * Burp calls this when this check reports more than one issue for the same
+     * URL path. The same AI finding (issue name) at the same URL is one issue.
+     */
+    @Override
+    public ConsolidationAction consolidateIssues(AuditIssue existingIssue, AuditIssue newIssue) {
+        if (existingIssue != null && newIssue != null
+                && existingIssue.name() != null
+                && existingIssue.name().equals(newIssue.name())
+                && Objects.equals(existingIssue.baseUrl(), newIssue.baseUrl())) {
+            return ConsolidationAction.KEEP_EXISTING;
+        }
+        return ConsolidationAction.KEEP_BOTH;
     }
 
     /** When Burp last invoked this check (0 if never this session). */
@@ -86,17 +128,18 @@ public class AiPassiveScanCheck implements PassiveScanCheck {
         return lastCallbackMillis.get();
     }
 
-    private void consider(HttpRequestResponse rr) {
+    /** Returns the queued job's handoff, or null if nothing was queued. */
+    private ResultHandoff consider(HttpRequestResponse rr) {
         lastCallbackMillis.set(System.currentTimeMillis());
 
         if (lifecycle.isUnloading() || !settings.passiveEnabled() || scanState.isPaused()) {
-            return;
+            return null;
         }
         if (rr == null || rr.request() == null || !rr.hasResponse()) {
-            return;   // never fetch a missing response from a passive check
+            return null;   // never fetch a missing response from a passive check
         }
         if (!aiGate.isEnabled() || !aiService.isConfigured()) {
-            return;
+            return null;
         }
 
         counters.incTotalRequests();
@@ -104,11 +147,11 @@ public class AiPassiveScanCheck implements PassiveScanCheck {
         // Side-effect-free filters first, so "Skipped (Backlog)" only counts
         // items that would otherwise have been analyzed.
         if (gate.prefilter(rr.request(), rr.response()) != GateDecision.ANALYZE) {
-            return;   // out of scope / content type / size: silently filtered
+            return null;   // out of scope / content type / size: silently filtered
         }
         if (!orchestrator.tryAdmitPassive()) {
             counters.incSkippedBacklog();
-            return;
+            return null;
         }
         boolean handedOff = false;
         try {
@@ -124,14 +167,18 @@ public class AiPassiveScanCheck implements PassiveScanCheck {
                         throw e;
                     }
                     handedOff = true;   // the job owns the slot from here, even if the queue rejects it
-                    if (!orchestrator.analyzePassive(queued, () -> gate.release(reservation))) {
+                    boolean await = orchestrator.passiveCanStartNow();
+                    ResultHandoff handoff = orchestrator.analyzePassive(queued, () -> gate.release(reservation), await);
+                    if (handoff == null) {
                         counters.incSkippedBacklog();
                     }
+                    return handoff;
                 }
                 case SKIP_DUPLICATE -> counters.incSkippedDuplicate();
                 case SKIP_RATE_LIMIT -> counters.incSkippedRateLimit();
                 default -> { /* not reachable after prefilter */ }
             }
+            return null;
         } finally {
             if (!handedOff) {
                 orchestrator.releasePassiveAdmission();

@@ -17,10 +17,12 @@ The extension wires itself into Burp from `SilentchainExtension.initialize(Monto
 
 ### Passive scan check
 - `api.scanner().registerPassiveScanCheck(AiPassiveScanCheck, ScanCheckType.PER_REQUEST)` -
-  automatic analysis of the items Burp's live audit tasks and scans audit. `doCheck` returns an
-  empty `AuditResult` immediately and queues in-scope items in the background; it never sends
-  requests to the target. Gating (scope, content-type, size, URL dedup, rate limit) is applied
-  by `ScanGate`. Not registered on Burp Suite Community Edition, where the extension stays idle.
+  automatic analysis of the items Burp's live audit tasks and scans audit. `doCheck` queues
+  in-scope items for analysis and returns the AI findings in its `AuditResult` (waiting at most
+  60 seconds, and only when the analysis can start at once); it never sends requests to the
+  target. `consolidateIssues` keeps the existing issue when the same finding is reported again
+  for the same URL. Gating (scope, content-type, size, URL dedup, rate limit) is applied by
+  `ScanGate`. Not registered on Burp Suite Community Edition, where the extension stays idle.
 
 ### AI
 - `api.ai().isEnabled()` - wrapped by `AiGate` and checked before every AI request, for every
@@ -49,8 +51,10 @@ The extension wires itself into Burp from `SilentchainExtension.initialize(Monto
   **Analyze Request (SILENTCHAIN)** to Proxy / Site map / Repeater for on-demand analysis.
 
 ### Findings
-- `api.siteMap().add(AuditIssue)` - each finding is emitted as a native Burp Scanner issue
-  (built by `FindingBuilder`).
+- `AuditResult.auditResult(List<AuditIssue>)` - passive findings are returned to Burp Scanner
+  from `doCheck` (built by `FindingBuilder`).
+- `api.siteMap().add(AuditIssue)` - right-click findings, and passive findings that complete
+  after `doCheck` stopped waiting (each finding is reported exactly once).
 
 ### Persistence
 - `api.persistence().preferences()` - settings storage (`config/SettingsPersistence`).
