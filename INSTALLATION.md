@@ -21,14 +21,15 @@ Complete step-by-step installation and setup guide for SILENTCHAIN AI™.
 
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
-| **Burp Suite** | Professional 2025.2+ (recommended) or Community | Professional + AI subscription required for the Burp AI provider · [Download](https://portswigger.net/burp/communitydownload) |
+| **Burp Suite** | Professional 2025.8 or later | Burp Suite Community Edition and Burp Suite DAST are not supported (on Community Edition the extension loads, logs why, and stays idle) · [Releases](https://portswigger.net/burp/releases) |
+| **Use AI** | Enabled for SILENTCHAIN in `Extensions` → `Installed` | Required for every provider, including Ollama. Off by default for manually loaded extensions; Burp asks when installing from the BApp Store. If AI is turned off globally in Burp's AI settings, nothing is sent |
 | **Java** | Version 21 | Bundled with current Burp releases |
 
 ### AI Provider (Choose One)
 
 | Provider | Cost | Setup Complexity | Privacy |
 |----------|------|------------------|---------|
-| **Burp AI** | Burp AI Credits | None (default) | In-process (PortSwigger) |
+| **Burp AI** | Burp AI Credits | None (default) | Sent through Burp to PortSwigger's Burp AI service |
 | **Ollama** | Free | Easy | 100% Local |
 | **OpenAI** | Paid | Easy | Cloud |
 | **Claude** | Paid | Easy | Cloud |
@@ -61,7 +62,7 @@ That link always serves the newest release, so it never changes. Need a specific
 #### Step 2: Load in Burp Suite
 
 1. **Open Burp Suite**
-   - Launch Burp Suite Community or Professional
+   - Launch Burp Suite Professional (2025.8 or later)
 
 2. **Navigate to Extensions**
    ```
@@ -79,23 +80,56 @@ That link always serves the newest release, so it never changes. Need a specific
    - Check for errors in the `Errors` tab
    - Look for the "SILENTCHAIN Community" tab in the main Burp window
 
+5. **Enable AI**
+   - In `Extensions` → `Installed`, enable **Use AI** for SILENTCHAIN
+   - It is off by default for manually loaded extensions, and no provider (Burp AI, Ollama or
+     a cloud provider) is used until it is on
+
 #### Step 3: Verify Installation
 
 - A new `SILENTCHAIN Community` tab should appear in Burp
 - The Output tab should display the SILENTCHAIN banner
 - The extension shows as loaded in the Extensions list
+- The **Runtime Status** line on the tab shows `AI: Enabled`
 
 ---
 
 ### Method 2: BApp Store (Coming Soon)
 
-SILENTCHAIN will be available in the Burp Suite BApp Store for one-click installation.
+SILENTCHAIN will be available in the Burp Suite BApp Store for one-click installation. When
+installing from the BApp Store, Burp asks whether the extension may use AI.
+
+---
+
+### Method 3: Build from Source
+
+The Gradle wrapper is included, and the JDK 21 toolchain is auto-provisioned if it is missing:
+
+```bash
+./gradlew shadowJar
+```
+
+This produces `build/libs/silentchain-community-edition-<version>.jar`. Load it as described
+in Method 1, Step 2.
 
 ---
 
 ## AI Provider Setup
 
 Choose and configure one AI provider below.
+
+SILENTCHAIN's settings live in Burp's **Settings** window: click **Settings** on the
+`SILENTCHAIN Community` tab, or search Burp's Settings for `SILENTCHAIN`. Changes apply
+immediately (there is no Save or Cancel; text fields apply on Enter or when you leave them).
+Each provider keeps its own API URL, API key and model, so switching provider never reuses
+another provider's key. Settings from earlier versions are migrated automatically.
+
+### Burp AI (Default, No Setup)
+
+Burp AI is selected by default and needs no URL or key. Prompts are sent through Burp to
+PortSwigger's Burp AI service under PortSwigger's AI data-handling policy and consume Burp AI
+credits from your account. Like every provider, it only runs when **Use AI** is enabled for
+SILENTCHAIN.
 
 ### Option 1: Ollama (Recommended for Beginners)
 
@@ -144,12 +178,12 @@ ollama run llama3 "Hello, test"
 
 #### Configure in SILENTCHAIN
 
-1. Go to `SILENTCHAIN` → `⚙ Settings`
+1. Open SILENTCHAIN's settings (`Settings` button on the `SILENTCHAIN Community` tab)
 2. **AI Provider**: Select `Ollama`
-3. **API URL**: `http://localhost:11434`
+3. **API URL**: `http://localhost:11434` (the default; SILENTCHAIN calls `/api/chat` on the host you configure)
 4. **Model**: `llama3:latest` (or your chosen model)
-5. Click `Test Connection` → Should show "✓ Connected to Ollama"
-6. Click `Save`
+5. Click `Test Connection` → Should show "OK: Ollama reachable. N models found."
+6. Changes apply immediately (there is no Save button)
 
 ---
 
@@ -165,13 +199,13 @@ ollama run llama3 "Hello, test"
 
 #### Configure in SILENTCHAIN
 
-1. Go to `SILENTCHAIN` → `⚙ Settings`
+1. Open SILENTCHAIN's settings (`Settings` button on the `SILENTCHAIN Community` tab)
 2. **AI Provider**: Select `OpenAI`
 3. **API URL**: `https://api.openai.com/v1`
-4. **API Key**: Paste your key
+4. **API Key**: Paste your key (sent as a Bearer token)
 5. **Model**: Select `gpt-4` or `gpt-3.5-turbo`
 6. Click `Test Connection`
-7. Click `Save`
+7. Changes apply immediately (there is no Save button)
 
 #### Cost Estimation
 
@@ -196,13 +230,13 @@ ollama run llama3 "Hello, test"
 
 #### Configure in SILENTCHAIN
 
-1. Go to `SILENTCHAIN` → `⚙ Settings`
+1. Open SILENTCHAIN's settings (`Settings` button on the `SILENTCHAIN Community` tab)
 2. **AI Provider**: Select `Claude`
 3. **API URL**: `https://api.anthropic.com/v1`
-4. **API Key**: Paste your key
+4. **API Key**: Paste your key (sent in the `x-api-key` header)
 5. **Model**: Select `claude-3-5-sonnet-20241022`
 6. Click `Test Connection`
-7. Click `Save`
+7. Changes apply immediately (there is no Save button)
 
 #### Recommended Models
 
@@ -223,13 +257,27 @@ ollama run llama3 "Hello, test"
 
 #### Configure in SILENTCHAIN
 
-1. Go to `SILENTCHAIN` → `⚙ Settings`
+1. Open SILENTCHAIN's settings (`Settings` button on the `SILENTCHAIN Community` tab)
 2. **AI Provider**: Select `Gemini`
 3. **API URL**: `https://generativelanguage.googleapis.com/v1`
-4. **API Key**: Paste your key
+4. **API Key**: Paste your key (sent in the `x-goog-api-key` header, never in the URL)
 5. **Model**: Select `gemini-1.5-pro`
 6. Click `Test Connection`
-7. Click `Save`
+7. Changes apply immediately (there is no Save button)
+
+---
+
+### Option 5: Azure OpenAI / Foundry
+
+#### Configure in SILENTCHAIN
+
+1. Open SILENTCHAIN's settings (`Settings` button on the `SILENTCHAIN Community` tab)
+2. **AI Provider**: Select `Azure Foundry`
+3. **API URL**: your resource endpoint, e.g. `https://YOUR-RESOURCE.openai.azure.com`
+4. **API Key**: Paste your key (sent in the `api-key` header)
+5. **Model**: your **deployment name**
+6. **Azure API Version**: e.g. `2024-06-01` (the default)
+7. Click `Test Connection`; changes apply immediately (there is no Save button)
 
 ---
 
@@ -237,7 +285,7 @@ ollama run llama3 "Hello, test"
 
 ### Step 1: Set Burp Scope
 
-SILENTCHAIN only analyzes in-scope targets:
+SILENTCHAIN's passive analysis only covers in-scope targets:
 
 1. Go to `Target` → `Scope` in Burp
 2. Click `Add` under "Include in scope"
@@ -265,23 +313,30 @@ SILENTCHAIN only analyzes in-scope targets:
 
 ### Step 3: Adjust SILENTCHAIN Settings
 
-1. Go to `SILENTCHAIN` → `⚙ Settings`
+1. Open SILENTCHAIN's settings (`Settings` button on the `SILENTCHAIN Community` tab)
 
 2. **Advanced Tab**:
-   - ☑ Verbose Logging (recommended initially)
+   - ☑ Verbose Logging (on by default; recommended initially)
+   - ☑ Enable automatic passive scanning (OFF by default; same as **Start Scanning** on the
+     SILENTCHAIN tab). The first time, SILENTCHAIN asks for data-handling consent.
 
-3. Click `Save`
+3. Changes apply immediately (there is no Save button)
+
+Passive analysis runs as a Burp Scanner passive scan check. Burp's live audit tasks and scans
+(for example Burp's default live passive audit of Proxy traffic) hand in-scope items to it;
+it never sends requests to the target. Repeater traffic is analyzed automatically only if a
+live audit task covers Repeater; otherwise use the right-click menu.
 
 ### Step 4: Test the Setup
 
 1. **Browse a test site** through your proxy-configured browser
 2. **Check SILENTCHAIN Console**:
-   - Should show "[HTTP] URL: ..." messages
-   - AI analysis logs
+   - Should show analysis log lines such as `SILENTCHAIN [passive] finding: ...`
+   - With Verbose Logging, per-URL results are logged too
 3. **Check Findings Panel**:
    - Detected vulnerabilities appear here
 4. **Check Burp Issues**:
-   - `Target` → `Issue Activity`
+   - `Dashboard` or `Target` → `Site map` issues
    - SILENTCHAIN findings appear alongside Burp Scanner
 
 ---
@@ -294,11 +349,12 @@ Run through this checklist to verify installation:
 
 - [ ] SILENTCHAIN Community tab visible in Burp
 - [ ] No errors in Extensions → Installed → (SILENTCHAIN) → Errors
+- [ ] **Use AI** enabled for SILENTCHAIN in Extensions → Installed
 - [ ] AI connection test passes (Test Connection)
 - [ ] Output tab shows the banner and initialization message
 - [ ] Target scope is configured
 - [ ] Browser proxy is set to Burp (127.0.0.1:8080)
-- [ ] Passive analysis enabled (or use right-click Analyze)
+- [ ] Passive analysis enabled (or use right-click **Analyze Request (SILENTCHAIN)**)
 - [ ] Findings appear in the Findings panel
 
 ### Test Request
@@ -308,7 +364,8 @@ Force analysis of a single request:
 1. Browse any in-scope URL
 2. Go to `Proxy` → `HTTP history`
 3. Right-click on a request
-4. Select `Analyze (SILENTCHAIN)`
+4. Select `Analyze Request (SILENTCHAIN)` (the first analysis asks for data-handling consent;
+   if the item has no response, SILENTCHAIN sends the request once to capture one)
 5. Check the Output/Console for analysis logs
 6. Check the Findings panel for results
 
@@ -322,8 +379,9 @@ Force analysis of a single request:
 
 **Solutions**:
 1. Confirm the extension type was set to **Java** when loading the `.jar`
-2. Verify you are running a current Burp (2025.2+) with a Java 21 runtime
-3. Check **Extensions → Installed → (SILENTCHAIN Community) → Errors** for details
+2. Verify you are running Burp Suite Professional 2025.8 or later with a Java 21 runtime
+   (on Burp Suite Community Edition the extension loads, logs why, and stays idle)
+3. Check **Extensions → Installed → (SILENTCHAIN Community Edition) → Errors** for details
 4. Re-download the `.jar` if it may be corrupted
 
 ---
@@ -333,6 +391,11 @@ Force analysis of a single request:
 **Error**: "AI connection test failed"
 
 **Solutions**:
+
+#### All providers:
+- If the message says AI is disabled for SILENTCHAIN, enable **Use AI** for SILENTCHAIN in
+  `Extensions` → `Installed` and check AI is not turned off in Burp's AI settings. This
+  applies to every provider, including Ollama.
 
 #### Ollama:
 ```bash
@@ -374,13 +437,22 @@ ollama serve
    Proxy → HTTP history → Verify requests appear
    ```
 
-3. **Enable Verbose Logging**:
+3. **Check SILENTCHAIN is running**:
+   ```
+   Use AI enabled for SILENTCHAIN (Extensions → Installed)
+   Passive analysis ON (Start Scanning) and tasks not paused (SILENTCHAIN's or Burp's)
+   A live passive audit task covers the traffic (Burp's default covers Proxy traffic)
+   ```
+   The **Runtime Status** line shows `Waiting for Burp Scanner (needs a live audit task)`
+   until Burp first calls SILENTCHAIN's passive check.
+
+4. **Enable Verbose Logging**:
    ```
    Settings → Advanced → ☑ Verbose Logging
    Console will show detailed analysis
    ```
 
-4. **Test with known vulnerable site**:
+5. **Test with known vulnerable site**:
    ```
    DVWA: http://dvwa.local
    WebGoat: http://localhost:8080/WebGoat
@@ -411,7 +483,7 @@ ollama serve
 
 4. **Increase Burp memory**:
    ```
-   # Edit burp.sh (Linux/Mac) or burpsuite_community.vmoptions (Windows)
+   # Edit the .vmoptions file in Burp's install directory
    -Xmx4g  # Increase to 4GB (or more)
    ```
 
@@ -419,25 +491,34 @@ ollama serve
 
 ### Rate Limiting Issues
 
-**Symptoms**: "Skipped (Rate Limit)" messages
+**Symptoms**: "Skipped (Rate Limit)" or "Skipped (Backlog)" counts rising
 
-**Explanation**: SILENTCHAIN enforces 4-second delay between AI requests to:
+**Explanation**: Passive analysis is throttled to:
 - Prevent AI provider rate limits
-- Reduce costs (cloud providers)
+- Reduce costs (cloud providers and Burp AI credits)
 - Maintain system stability
 
+Each host gets at most **Per-host Requests/Minute** passive analyses (default 10; Advanced
+tab); extra items are skipped, not queued, and counted as **Skipped (Rate Limit)**. When 16
+passive items are already queued or running, new ones are counted as **Skipped (Backlog)**.
+A method + URL analyzed within the **URL Dedup Window** (default 60 minutes) is counted as
+**Skipped (Duplicate)**. Burp scans and crawls also feed in-scope items, so these counters
+(and AI usage) can rise during scans.
+
 **Not a bug**: This is intentional design. Passive analysis doesn't require real-time speed.
+Use right-click **Analyze Request (SILENTCHAIN)** for a specific request; it bypasses these
+limits.
 
 ---
 
 ### Extension Crashes
 
-**Symptoms**: SILENTCHAIN stops responding, errors in console
+**Symptoms**: SILENTCHAIN stops responding, errors in console, or tasks end with status **Error**
 
 **Solutions**:
-1. **Check Burp logs**:
+1. **Check Burp logs** (failed analyses log a stack trace here):
    ```
-   Extensions → Installed → (SILENTCHAIN Community) → Errors
+   Extensions → Installed → (SILENTCHAIN Community Edition) → Errors
    ```
 
 2. **Restart extension**:
@@ -456,12 +537,11 @@ ollama serve
 
 ### Documentation
 - [Main README](README.md)
-- [User Guide](docs/USER_GUIDE.md)
-- [FAQ](docs/FAQ.md)
+- [Usage](docs/usage.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
 ### Community Support
 - [GitHub Issues](https://github.com/silentchainai/SILENTCHAIN/issues)
-- [Discord Community](https://discord.gg/silentchain)
 - Email: support@silentchain.ai
 
 ### Professional Support
@@ -474,9 +554,8 @@ Upgrade to SILENTCHAIN Professional for priority support:
 
 Once installation is complete:
 
-1. **Read the [User Guide](docs/USER_GUIDE.md)** for detailed usage
-2. **Review [Best Practices](docs/BEST_PRACTICES.md)** for effective testing
-3. **Join the [Discord Community](https://discord.gg/silentchain)** for tips and updates
-4. **Star the repository** to stay updated
+1. **Read the [Usage guide](docs/usage.md)** for detailed usage
+2. **Review the [Configuration reference](docs/configuration.md)** for every setting
+3. **Star the repository** to stay updated
 
 Happy hunting! 🔒🔗⛓️

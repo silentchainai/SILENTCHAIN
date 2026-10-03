@@ -1,6 +1,6 @@
 # DISCLAIMER
 
-## Independent extension — not affiliated with PortSwigger
+## Independent extension - not affiliated with PortSwigger
 
 SILENTCHAIN Community Edition is an independent extension developed by Sn1perSecurity LLC.
 It is not affiliated with, endorsed by, or sponsored by PortSwigger Ltd. PortSwigger has not
@@ -26,23 +26,29 @@ testing, penetration testing, and vulnerability research.
 When the **Burp AI** provider (the default) is selected, vulnerability analysis is performed
 by PortSwigger's Burp AI service and each analysis consumes **Burp AI Credits** from your
 PortSwigger account; the number of credits varies with request and response size. AI analysis
-is **disabled by default** — enable it only after reviewing your credit balance and
-consumption preferences.
+is **disabled by default** - enable it only after reviewing your credit balance and
+consumption preferences. No AI request is sent through any provider unless **Use AI** is
+enabled for SILENTCHAIN in Burp (Extensions > Installed). When passive analysis is on, Burp
+scans and crawls also feed in-scope items to SILENTCHAIN, so credit usage can rise during
+scans.
 
 ## Data handling
 
 SILENTCHAIN Community Edition processes HTTP requests and responses intercepted by Burp Suite.
 The destination of that data depends on the AI provider you select:
 
-- **Burp AI** — analyzed in-process by PortSwigger's Burp AI service under PortSwigger's
-  data-handling terms.
-- **Ollama** — analyzed by a local model; nothing leaves your machine.
-- **Cloud providers** (OpenAI, Claude, Gemini, Azure OpenAI/Foundry) — request/response
+- **Burp AI** - sent through Burp to PortSwigger's Burp AI service and analyzed under
+  PortSwigger's AI data-handling policy.
+- **Ollama** - analyzed by the Ollama host you configure (localhost by default); when it runs
+  on your machine, nothing leaves your machine.
+- **Cloud providers** (OpenAI, Claude, Gemini, Azure OpenAI/Foundry) - request/response
   content for in-scope targets is transmitted to that provider's endpoint under its terms.
 
-The extension's built-in **DataSanitizer** (enabled by default) redacts common secrets and
-PII (API keys, bearer tokens, session cookies, emails) and neutralizes prompt-injection
-patterns before content is sent to a cloud provider; it is not a guarantee. The extension
+Credentials (cookie values, `Authorization` and API-key/token header values, and parameters or
+JSON fields named like credentials) are always replaced with `[REDACTED]` before any AI request. The extension's built-in
+**DataSanitizer** (enabled by default) additionally redacts common secrets and PII (API keys,
+bearer tokens, session cookies, emails) and neutralizes prompt-injection patterns before
+content is sent to any provider; it is not a guarantee. The extension
 itself does not collect, store, or transmit any usage data, telemetry, or analytics, and
 contacts no third-party endpoints other than the AI provider you configure. Users handling
 regulated data (HIPAA, PCI-DSS, GDPR-restricted) should prefer a local provider (Ollama) and
@@ -67,7 +73,7 @@ full responsibility for compliance with all applicable laws and regulations.**
 
 > For authorized security testing only. User is responsible for obtaining written permission
 > before scanning any target. Sn1perSecurity LLC disclaims liability for misuse. Independent
-> extension — not affiliated with PortSwigger Ltd.
+> extension - not affiliated with PortSwigger Ltd.
 
 ---
 
