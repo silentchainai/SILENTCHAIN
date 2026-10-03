@@ -26,6 +26,7 @@ public class ScanState {
 
     private final AtomicBoolean paused = new AtomicBoolean(false);
     private volatile Consumer<String> consoleSink;
+    private volatile Runnable onResume;
 
     public ScanState(MontoyaApi api, Settings settings) {
         this.api = api;
@@ -37,11 +38,26 @@ public class ScanState {
     /** Toggle the pause flag. Returns the new state. (Called on the EDT.) */
     public boolean togglePaused() {
         boolean newValue = !paused.get();
-        paused.set(newValue);
+        setPaused(newValue);
         return newValue;
     }
 
-    public void setPaused(boolean v) { paused.set(v); }
+    public void setPaused(boolean v) {
+        boolean was = paused.getAndSet(v);
+        Runnable hook = onResume;
+        if (was && !v && hook != null) {
+            try {
+                hook.run();
+            } catch (Throwable t) {
+                api.logging().logToError("SILENTCHAIN: failed to resume paused tasks", t);
+            }
+        }
+    }
+
+    /** Called when tasks are resumed, so work parked while paused can be re-queued. */
+    public void setOnResume(Runnable hook) {
+        this.onResume = hook;
+    }
 
     public void setConsoleSink(Consumer<String> sink) {
         this.consoleSink = sink;
@@ -64,6 +80,11 @@ public class ScanState {
             api.logging().logToOutput(message);
             push("[DEBUG] " + message);
         }
+    }
+
+    /** Mirror a line to the in-tab console only (the caller already logged it to Burp). */
+    public void console(String message) {
+        push(message);
     }
 
     private void push(String message) {

@@ -7,8 +7,6 @@ package com.sn1persecurity.silentchain.bapp.scan;
  */
 public enum GateDecision {
     ANALYZE,
-    SKIP_DISABLED,
-    SKIP_TOOL,
     SKIP_NO_REQUEST,
     SKIP_SCOPE,
     SKIP_CONTENT_TYPE,

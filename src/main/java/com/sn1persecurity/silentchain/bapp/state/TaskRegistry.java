@@ -6,15 +6,19 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Thread-safe registry of analysis tasks backing the Active Tasks table.
- * Newest task is shown first.
+ * Newest task is shown first. Capped so a long session cannot grow it without
+ * bound: the oldest finished tasks are dropped first; active tasks never are.
  */
 public class TaskRegistry {
+
+    static final int MAX_TASKS = 1_000;
 
     private final CopyOnWriteArrayList<ScanTask> tasks = new CopyOnWriteArrayList<>();
 
     public ScanTask newTask(String type, String url) {
         ScanTask task = new ScanTask(type, url);
         tasks.add(0, task);
+        evictFinishedOverCap();
         return task;
     }
 
@@ -34,8 +38,7 @@ public class TaskRegistry {
     public int cancelAll() {
         int n = 0;
         for (ScanTask t : tasks) {
-            if (!t.status().isTerminal()) {
-                t.setStatus(TaskStatus.CANCELLED);
+            if (t.finish(TaskStatus.CANCELLED)) {
                 n++;
             }
         }
@@ -48,5 +51,21 @@ public class TaskRegistry {
 
     public int size() {
         return tasks.size();
+    }
+
+    private void evictFinishedOverCap() {
+        int excess = tasks.size() - MAX_TASKS;
+        if (excess <= 0) {
+            return;
+        }
+        List<ScanTask> evict = new ArrayList<>();
+        List<ScanTask> snapshot = snapshot();
+        for (int i = snapshot.size() - 1; i >= 0 && evict.size() < excess; i--) {
+            ScanTask t = snapshot.get(i);
+            if (t.status().isTerminal()) {
+                evict.add(t);
+            }
+        }
+        tasks.removeAll(evict);
     }
 }

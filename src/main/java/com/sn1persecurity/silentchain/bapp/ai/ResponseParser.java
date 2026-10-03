@@ -13,6 +13,9 @@ public final class ResponseParser {
 
     private static final String[] WRAPPER_KEYS = {"findings", "results", "vulnerabilities", "issues"};
 
+    /** Longest finding title kept (titles are shown in tables and used as Burp issue names). */
+    static final int MAX_TITLE_CHARS = 200;
+
     private ResponseParser() {}
 
     public static List<ParsedFinding> parse(String aiResponse) {
@@ -44,7 +47,7 @@ public final class ResponseParser {
     }
 
     private static ParsedFinding parseFinding(JSONObject obj) {
-        String title = obj.optString("title", "").trim();
+        String title = sanitizeTitle(obj.optString("title", ""));
         if (title.isEmpty()) {
             return null;
         }
@@ -226,5 +229,35 @@ public final class ResponseParser {
             }
         }
         return null;
+    }
+
+    /**
+     * AI output is untrusted (the model reads attacker-controlled traffic), and the
+     * title is displayed in Swing tables and as the Burp issue name. Strip control
+     * characters and angle brackets (no markup can survive), collapse whitespace
+     * and cap the length.
+     */
+    static String sanitizeTitle(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder(Math.min(raw.length(), MAX_TITLE_CHARS));
+        boolean lastWasSpace = false;
+        for (int i = 0; i < raw.length() && out.length() < MAX_TITLE_CHARS; i++) {
+            char c = raw.charAt(i);
+            if (c == '<' || c == '>') {
+                continue;
+            }
+            if (Character.isWhitespace(c) || Character.isISOControl(c)) {
+                if (!lastWasSpace && out.length() > 0) {
+                    out.append(' ');
+                    lastWasSpace = true;
+                }
+                continue;
+            }
+            out.append(c);
+            lastWasSpace = false;
+        }
+        return out.toString().trim();
     }
 }

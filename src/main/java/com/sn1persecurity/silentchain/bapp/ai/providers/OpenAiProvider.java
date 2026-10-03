@@ -2,7 +2,9 @@ package com.sn1persecurity.silentchain.bapp.ai.providers;
 
 import burp.api.montoya.MontoyaApi;
 
+import com.sn1persecurity.silentchain.bapp.ai.AiGate;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
+import com.sn1persecurity.silentchain.bapp.config.Settings.ProviderConfig;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient.HttpReply;
 
@@ -11,7 +13,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,11 +32,13 @@ public class OpenAiProvider implements LlmProvider {
     private final MontoyaApi api;
     private final MontoyaHttpClient http;
     private final Settings settings;
+    private final AiGate aiGate;
 
-    public OpenAiProvider(MontoyaApi api, MontoyaHttpClient http, Settings settings) {
+    public OpenAiProvider(MontoyaApi api, MontoyaHttpClient http, Settings settings, AiGate aiGate) {
         this.api = api;
         this.http = http;
         this.settings = settings;
+        this.aiGate = aiGate;
     }
 
     @Override public ProviderId id() { return ProviderId.OPENAI; }
@@ -43,14 +46,19 @@ public class OpenAiProvider implements LlmProvider {
     @Override public boolean usesApiKey() { return true; }
 
     @Override
+    public boolean isConfigured() {
+        return !baseUrl().isBlank() && !cfg().apiKey().isBlank();
+    }
+
+    @Override
     public boolean isAvailable() {
-        return !baseUrl().isBlank() && !settings.apiKey().isBlank();
+        return aiGate.isEnabled() && isConfigured();
     }
 
     @Override
     public List<String> listModels() {
-        if (settings.apiKey().isBlank()) return List.of();
-        HttpReply r = http.get(baseUrl() + "/models", MontoyaHttpClient.bearer(settings.apiKey()));
+        if (!aiGate.isEnabled() || cfg().apiKey().isBlank()) return List.of();
+        HttpReply r = http.get(baseUrl() + "/models", MontoyaHttpClient.bearer(cfg().apiKey()));
         if (!r.ok()) return List.of();
         try {
             JSONObject obj = new JSONObject(r.body());
@@ -72,11 +80,15 @@ public class OpenAiProvider implements LlmProvider {
 
     @Override
     public Optional<String> analyze(String systemPrompt, String userPrompt) {
-        if (!isAvailable()) {
+        if (!aiGate.isEnabled()) {
+            return Optional.empty();
+        }
+        if (!isConfigured()) {
             api.logging().logToError("OpenAI: missing API URL or API key.");
             return Optional.empty();
         }
-        String model = settings.model();
+        ProviderConfig cfg = cfg();
+        String model = cfg.model();
         if (model.isBlank()) model = "gpt-4o-mini";
 
         JSONObject body = new JSONObject();
@@ -89,7 +101,7 @@ public class OpenAiProvider implements LlmProvider {
         messages.put(new JSONObject().put("role", "user").put("content", userPrompt));
         body.put("messages", messages);
 
-        Map<String, String> headers = MontoyaHttpClient.bearer(settings.apiKey());
+        Map<String, String> headers = MontoyaHttpClient.bearer(cfg.apiKey());
 
         HttpReply r = http.postJson(baseUrl() + "/chat/completions", headers, body.toString());
         if (!r.ok()) {
@@ -111,18 +123,23 @@ public class OpenAiProvider implements LlmProvider {
 
     @Override
     public TestResult testConnection() {
+        if (!aiGate.isEnabled()) return TestResult.fail(AiGate.DISABLED_MESSAGE);
         if (baseUrl().isBlank()) return TestResult.fail("OpenAI URL is empty.");
-        if (settings.apiKey().isBlank()) return TestResult.fail("OpenAI API key is empty.");
-        HttpReply r = http.get(baseUrl() + "/models", MontoyaHttpClient.bearer(settings.apiKey()));
+        if (cfg().apiKey().isBlank()) return TestResult.fail("OpenAI API key is empty.");
+        HttpReply r = http.get(baseUrl() + "/models", MontoyaHttpClient.bearer(cfg().apiKey()));
         if (r.status() == 0) return TestResult.fail("OpenAI unreachable (DNS / TLS / connection error).");
         if (r.status() == 401) return TestResult.fail("OpenAI rejected the API key (HTTP 401).");
         if (!r.ok()) return TestResult.fail("OpenAI returned HTTP " + r.status() + ".");
         return TestResult.ok("OpenAI reachable.");
     }
 
+    private ProviderConfig cfg() {
+        return settings.config(id());
+    }
+
     private String baseUrl() {
-        String configured = settings.apiUrl();
-        String url = configured != null && !configured.isBlank() ? configured : id().defaultUrl();
+        String configured = cfg().apiUrl();
+        String url = !configured.isBlank() ? configured : id().defaultUrl();
         return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 

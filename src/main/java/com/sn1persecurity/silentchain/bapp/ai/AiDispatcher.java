@@ -13,62 +13,71 @@ import com.sn1persecurity.silentchain.bapp.ai.providers.ProviderId;
 import com.sn1persecurity.silentchain.bapp.ai.providers.TestResult;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient;
-import com.sn1persecurity.silentchain.bapp.util.ThreadPool;
 
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Consumer;
 
 /**
  * Constructs every {@link LlmProvider}, holds them in an enum-keyed map, and
  * routes every analyze / test / listModels call based on the currently
  * configured {@link Settings#provider()}.
+ *
+ * Every entry point checks {@link AiGate} first, so no provider is reached when
+ * AI is disabled for the extension (the providers and the HTTP egress point
+ * check it again).
  */
 public class AiDispatcher {
 
     private final Settings settings;
-    private final ThreadPool threadPool;
+    private final AiGate aiGate;
     private final Map<ProviderId, LlmProvider> providers = new EnumMap<>(ProviderId.class);
 
-    public AiDispatcher(MontoyaApi api, MontoyaHttpClient http, Settings settings, ThreadPool threadPool) {
+    public AiDispatcher(MontoyaApi api, MontoyaHttpClient http, Settings settings, AiGate aiGate) {
         this.settings = settings;
-        this.threadPool = threadPool;
+        this.aiGate = aiGate;
 
-        providers.put(ProviderId.BURP_AI,       new BurpAiProvider(api));
-        providers.put(ProviderId.OLLAMA,        new OllamaProvider(api, http, settings));
-        providers.put(ProviderId.OPENAI,        new OpenAiProvider(api, http, settings));
-        providers.put(ProviderId.CLAUDE,        new ClaudeProvider(api, http, settings));
-        providers.put(ProviderId.GEMINI,        new GeminiProvider(api, http, settings));
-        providers.put(ProviderId.AZURE_FOUNDRY, new AzureFoundryProvider(api, http, settings));
+        providers.put(ProviderId.BURP_AI,       new BurpAiProvider(api, aiGate));
+        providers.put(ProviderId.OLLAMA,        new OllamaProvider(api, http, settings, aiGate));
+        providers.put(ProviderId.OPENAI,        new OpenAiProvider(api, http, settings, aiGate));
+        providers.put(ProviderId.CLAUDE,        new ClaudeProvider(api, http, settings, aiGate));
+        providers.put(ProviderId.GEMINI,        new GeminiProvider(api, http, settings, aiGate));
+        providers.put(ProviderId.AZURE_FOUNDRY, new AzureFoundryProvider(api, http, settings, aiGate));
     }
 
     public LlmProvider current() {
         return providers.get(settings.provider());
     }
 
-    public LlmProvider get(ProviderId id) {
-        return providers.get(id);
-    }
-
+    /** AI enabled for the extension AND the selected provider is configured. */
     public boolean isAvailable() {
-        return current().isAvailable();
+        return aiGate.isEnabled() && current().isAvailable();
     }
 
-    public List<String> listModels() {
-        return current().listModels();
+    /** The selected provider has the endpoint/credentials it needs (ignores the AI gate). */
+    public boolean isConfigured() {
+        return current().isConfigured();
     }
 
     public Optional<String> analyze(String systemPrompt, String userPrompt) {
+        if (!aiGate.isEnabled()) {
+            return Optional.empty();
+        }
         return current().analyze(systemPrompt, userPrompt);
     }
 
-    public void analyzeAsync(String systemPrompt, String userPrompt, Consumer<Optional<String>> callback) {
-        threadPool.submit(() -> callback.accept(analyze(systemPrompt, userPrompt)));
+    public List<String> listModels(ProviderId which) {
+        if (!aiGate.isEnabled()) {
+            return List.of();
+        }
+        return providers.get(which).listModels();
     }
 
     public TestResult testConnection(ProviderId which) {
+        if (!aiGate.isEnabled()) {
+            return TestResult.fail(AiGate.DISABLED_MESSAGE);
+        }
         return providers.get(which).testConnection();
     }
 }

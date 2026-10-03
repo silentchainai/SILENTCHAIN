@@ -1,11 +1,10 @@
 package com.sn1persecurity.silentchain.bapp.config;
 
-import burp.api.montoya.core.ToolType;
-
 import com.sn1persecurity.silentchain.bapp.ai.providers.ProviderId;
 
-import java.util.EnumSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Mutable runtime configuration. Defaults are safe / opt-in: passive analysis
@@ -17,13 +16,30 @@ import java.util.Set;
  */
 public class Settings {
 
+    /**
+     * Endpoint, key and model for ONE provider. Each provider keeps its own, so
+     * switching provider never sends one vendor's API key to another.
+     */
+    public record ProviderConfig(String apiUrl, String apiKey, String model) {
+        public static final ProviderConfig EMPTY = new ProviderConfig("", "", "");
+
+        public ProviderConfig {
+            apiUrl = apiUrl != null ? apiUrl : "";
+            apiKey = apiKey != null ? apiKey : "";
+            model = model != null ? model : "";
+        }
+
+        public ProviderConfig withApiUrl(String v) { return new ProviderConfig(v, apiKey, model); }
+        public ProviderConfig withApiKey(String v) { return new ProviderConfig(apiUrl, v, model); }
+        public ProviderConfig withModel(String v)  { return new ProviderConfig(apiUrl, apiKey, v); }
+    }
+
     // ---- Scan toggles -------------------------------------------------------
 
     // AI analysis is OFF by default (opt-in) per PortSwigger best-practice for
     // credit-consuming AI extensions.
     private volatile boolean passiveEnabled = false;
     private volatile boolean sanitizerEnabled = true;
-    private volatile boolean inScopeOnly = true;
     private volatile boolean verbose = true;
 
     // ---- Safety rails -------------------------------------------------------
@@ -36,9 +52,7 @@ public class Settings {
     // ---- AI provider config -------------------------------------------------
 
     private volatile ProviderId provider = ProviderId.BURP_AI;
-    private volatile String apiUrl = "";
-    private volatile String apiKey = "";
-    private volatile String model = "";
+    private final Map<ProviderId, ProviderConfig> providerConfigs = new ConcurrentHashMap<>();
     private volatile int maxTokens = 2048;
     private volatile String azureApiVersion = "2024-06-01";
     private volatile int requestTimeoutSeconds = 60;
@@ -79,12 +93,6 @@ public class Settings {
             "text/xml"
     );
 
-    private volatile Set<ToolType> allowedToolSources = EnumSet.of(
-            ToolType.PROXY,
-            ToolType.REPEATER,
-            ToolType.TARGET
-    );
-
     // ---- Accessors ----------------------------------------------------------
 
     public boolean passiveEnabled() { return passiveEnabled; }
@@ -92,9 +100,6 @@ public class Settings {
 
     public boolean sanitizerEnabled() { return sanitizerEnabled; }
     public void setSanitizerEnabled(boolean v) { this.sanitizerEnabled = v; }
-
-    public boolean inScopeOnly() { return inScopeOnly; }
-    public void setInScopeOnly(boolean v) { this.inScopeOnly = v; }
 
     public boolean verbose() { return verbose; }
     public void setVerbose(boolean v) { this.verbose = v; }
@@ -114,14 +119,19 @@ public class Settings {
     public ProviderId provider() { return provider; }
     public void setProvider(ProviderId v) { this.provider = v != null ? v : ProviderId.BURP_AI; }
 
-    public String apiUrl() { return apiUrl; }
-    public void setApiUrl(String v) { this.apiUrl = v != null ? v : ""; }
+    /** Endpoint/key/model stored for {@code id} (empty fields if never configured). */
+    public ProviderConfig config(ProviderId id) {
+        return providerConfigs.getOrDefault(id, ProviderConfig.EMPTY);
+    }
 
-    public String apiKey() { return apiKey; }
-    public void setApiKey(String v) { this.apiKey = v != null ? v : ""; }
+    public void setConfig(ProviderId id, ProviderConfig cfg) {
+        if (id != null) {
+            providerConfigs.put(id, cfg != null ? cfg : ProviderConfig.EMPTY);
+        }
+    }
 
-    public String model() { return model; }
-    public void setModel(String v) { this.model = v != null ? v : ""; }
+    /** The selected provider's model, for display. Providers read {@link #config} for their own. */
+    public String model() { return config(provider).model(); }
 
     public int maxTokens() { return maxTokens; }
     public void setMaxTokens(int v) { this.maxTokens = Math.max(1, v); }
@@ -129,6 +139,7 @@ public class Settings {
     public String azureApiVersion() { return azureApiVersion; }
     public void setAzureApiVersion(String v) { this.azureApiVersion = v != null ? v : ""; }
 
+    /** Response timeout for third-party AI requests and the context-menu response fetch. */
     public int requestTimeoutSeconds() { return requestTimeoutSeconds; }
     public void setRequestTimeoutSeconds(int v) { this.requestTimeoutSeconds = Math.max(5, v); }
 
@@ -145,7 +156,4 @@ public class Settings {
 
     public Set<String> contentTypeAllowList() { return contentTypeAllowList; }
     public void setContentTypeAllowList(Set<String> v) { this.contentTypeAllowList = Set.copyOf(v); }
-
-    public Set<ToolType> allowedToolSources() { return allowedToolSources; }
-    public void setAllowedToolSources(Set<ToolType> v) { this.allowedToolSources = EnumSet.copyOf(v); }
 }

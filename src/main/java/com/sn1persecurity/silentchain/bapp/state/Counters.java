@@ -14,7 +14,7 @@ public class Counters {
     private final AtomicLong skippedRateLimit = new AtomicLong();
     private final AtomicLong skippedLowConfidence = new AtomicLong();
     private final AtomicLong findingsCreated = new AtomicLong();
-    private final AtomicLong cacheHits = new AtomicLong();
+    private final AtomicLong skippedBacklog = new AtomicLong();
     private final AtomicLong errors = new AtomicLong();
 
     public void incTotalRequests()        { totalRequests.incrementAndGet(); }
@@ -23,7 +23,7 @@ public class Counters {
     public void incSkippedRateLimit()     { skippedRateLimit.incrementAndGet(); }
     public void incSkippedLowConfidence() { skippedLowConfidence.incrementAndGet(); }
     public void incFindingsCreated()      { findingsCreated.incrementAndGet(); }
-    public void incCacheHits()            { cacheHits.incrementAndGet(); }
+    public void incSkippedBacklog()       { skippedBacklog.incrementAndGet(); }
     public void incErrors()               { errors.incrementAndGet(); }
 
     public long totalRequests()        { return totalRequests.get(); }
@@ -32,6 +32,6 @@ public class Counters {
     public long skippedRateLimit()     { return skippedRateLimit.get(); }
     public long skippedLowConfidence() { return skippedLowConfidence.get(); }
     public long findingsCreated()      { return findingsCreated.get(); }
-    public long cacheHits()            { return cacheHits.get(); }
+    public long skippedBacklog()       { return skippedBacklog.get(); }
     public long errors()               { return errors.get(); }
 }

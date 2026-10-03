@@ -1,39 +1,53 @@
 package com.sn1persecurity.silentchain.bapp.ui.settings;
 
+import burp.api.montoya.logging.Logging;
+
 import com.sn1persecurity.silentchain.bapp.ai.AiDispatcher;
+import com.sn1persecurity.silentchain.bapp.ai.AiGate;
 import com.sn1persecurity.silentchain.bapp.ai.providers.ProviderId;
 import com.sn1persecurity.silentchain.bapp.ai.providers.TestResult;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
+import com.sn1persecurity.silentchain.bapp.config.Settings.ProviderConfig;
+import com.sn1persecurity.silentchain.bapp.config.SettingsPersistence;
+import com.sn1persecurity.silentchain.bapp.util.ThreadPool;
 
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
-import javax.swing.JLabel;
 import javax.swing.JComponent;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
-import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
-
+import java.awt.Component;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.util.List;
 
 /**
- * AI Provider configuration tab — mirrors Community's "AI Provider" settings
- * tab (silentchain_ai_community.py:1322-1504) but with Burp AI added as the
- * default provider.
+ * AI Provider configuration tab, shown inside Burp's Settings window. Mirrors
+ * Community's "AI Provider" settings tab (silentchain_ai_community.py:1322-1504)
+ * with Burp AI added as the default provider.
  *
- * When Burp AI is selected, the third-party fields (URL / key / model /
- * max-tokens / azure-version) are disabled because Burp AI runs in-process.
+ * Values apply as they are committed (Enter / focus loss / selection); there is
+ * no Save or Cancel. Each provider keeps its own URL, key and model, so
+ * switching provider loads that provider's values and never reuses another
+ * vendor's key. When Burp AI is selected the third-party fields are disabled.
  */
 public class AiProviderTab extends JPanel {
 
     private final Settings settings;
+    private final SettingsPersistence persistence;
     private final AiDispatcher dispatcher;
+    private final AiGate aiGate;
+    private final ThreadPool threadPool;
+    private final Logging logging;
+    private final Runnable onChanged;
 
     private final JComboBox<String> providerCombo = new JComboBox<>();
     private final JTextField apiUrl = new JTextField(30);
@@ -48,12 +62,24 @@ public class AiProviderTab extends JPanel {
     private final JButton testBtn = new JButton("Test Connection");
     private final JLabel statusLabel = new JLabel(" ");
 
-    public AiProviderTab(Settings settings, AiDispatcher dispatcher) {
+    /** Provider whose URL/key/model the fields currently show. */
+    private ProviderId shownProvider = ProviderId.BURP_AI;
+    /** True while fields are being filled programmatically, so listeners do not commit. */
+    private boolean loading;
+
+    public AiProviderTab(Settings settings, SettingsPersistence persistence, AiDispatcher dispatcher,
+                         AiGate aiGate, ThreadPool threadPool, Logging logging, Runnable onChanged) {
         this.settings = settings;
+        this.persistence = persistence;
         this.dispatcher = dispatcher;
+        this.aiGate = aiGate;
+        this.threadPool = threadPool;
+        this.logging = logging;
+        this.onChanged = onChanged;
 
         setLayout(new GridBagLayout());
         modelCombo.setEditable(true);
+        statusLabel.putClientProperty("html.disable", Boolean.TRUE);
 
         for (ProviderId p : ProviderId.values()) {
             providerCombo.addItem(p.displayName());
@@ -80,34 +106,88 @@ public class AiProviderTab extends JPanel {
         addHelp(row++);
 
         providerCombo.addActionListener(e -> onProviderChanged());
+        CommitListeners.onCommit(apiUrl, this::commitProviderFields);
+        CommitListeners.onCommit(apiKey, this::commitProviderFields);
+        modelCombo.addActionListener(e -> commitProviderFields());
+        Component modelEditor = modelCombo.getEditor().getEditorComponent();
+        modelEditor.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                commitProviderFields();
+            }
+        });
+        CommitListeners.onCommit(maxTokens, this::commitGeneral);
+        CommitListeners.onCommit(azureApiVersion, this::commitGeneral);
+        CommitListeners.onCommit(ollamaNumCtx, this::commitGeneral);
+        ollamaStructured.addActionListener(e -> commitGeneral());
         refreshBtn.addActionListener(e -> onRefreshModels());
         testBtn.addActionListener(e -> onTestConnection());
     }
 
-    // ---- Load / store -------------------------------------------------------
+    // ---- Load / commit ------------------------------------------------------
 
+    /** Fill every field from the live settings (called each time the panel is shown). */
     public void load() {
-        providerCombo.setSelectedItem(settings.provider().displayName());
-        apiUrl.setText(settings.apiUrl());
-        apiKey.setText(settings.apiKey());
-        setModel(settings.model());
-        maxTokens.setText(Integer.toString(settings.maxTokens()));
-        azureApiVersion.setText(settings.azureApiVersion());
-        ollamaStructured.setSelectedItem(structuredToCombo(settings.ollamaStructuredOutput()));
-        ollamaNumCtx.setText(Integer.toString(settings.ollamaNumCtx()));
+        loading = true;
+        try {
+            providerCombo.setSelectedItem(settings.provider().displayName());
+            showProviderFields(settings.provider());
+            maxTokens.setText(Integer.toString(settings.maxTokens()));
+            azureApiVersion.setText(settings.azureApiVersion());
+            ollamaStructured.setSelectedItem(structuredToCombo(settings.ollamaStructuredOutput()));
+            ollamaNumCtx.setText(Integer.toString(settings.ollamaNumCtx()));
+        } finally {
+            loading = false;
+        }
         applyEnablement();
     }
 
-    public void store() {
-        settings.setProvider(selectedProvider());
-        settings.setApiUrl(apiUrl.getText().trim());
-        settings.setApiKey(new String(apiKey.getPassword()));
-        Object m = modelCombo.getEditor().getItem();
-        settings.setModel(m != null ? m.toString().trim() : "");
-        settings.setMaxTokens(parseInt(maxTokens.getText(), settings.maxTokens()));
+    private void showProviderFields(ProviderId p) {
+        ProviderConfig cfg = settings.config(p);
+        shownProvider = p;
+        apiUrl.setText(cfg.apiUrl().isBlank() ? p.defaultUrl() : cfg.apiUrl());
+        apiKey.setText(cfg.apiKey());
+        setModels(List.of());
+        modelCombo.getEditor().setItem(cfg.model());
+    }
+
+    /** Store the URL/key/model fields into the provider they belong to. */
+    private void commitProviderFields() {
+        if (loading) {
+            return;
+        }
+        ProviderConfig edited = new ProviderConfig(
+                apiUrl.getText().trim(),
+                new String(apiKey.getPassword()).trim(),
+                currentModelText().trim());
+        if (!edited.equals(settings.config(shownProvider))) {
+            settings.setConfig(shownProvider, edited);
+            save();
+        }
+    }
+
+    private void commitGeneral() {
+        if (loading) {
+            return;
+        }
+        settings.setMaxTokens(CommitListeners.parseInt(maxTokens.getText(), settings.maxTokens()));
         settings.setAzureApiVersion(azureApiVersion.getText().trim());
         settings.setOllamaStructuredOutput(comboToStructured(ollamaStructured.getSelectedItem()));
-        settings.setOllamaNumCtx(parseInt(ollamaNumCtx.getText(), settings.ollamaNumCtx()));
+        settings.setOllamaNumCtx(CommitListeners.parseInt(ollamaNumCtx.getText(), settings.ollamaNumCtx()));
+        loading = true;
+        try {
+            // Show the clamped values actually in effect.
+            maxTokens.setText(Integer.toString(settings.maxTokens()));
+            ollamaNumCtx.setText(Integer.toString(settings.ollamaNumCtx()));
+        } finally {
+            loading = false;
+        }
+        save();
+    }
+
+    private void save() {
+        persistence.save(settings);
+        onChanged.run();
     }
 
     private static String structuredToCombo(Settings.StructuredOutput mode) {
@@ -130,14 +210,20 @@ public class AiProviderTab extends JPanel {
     // ---- Handlers -----------------------------------------------------------
 
     private void onProviderChanged() {
+        if (loading) {
+            return;
+        }
+        commitProviderFields();    // keep anything typed for the provider being left
         ProviderId p = selectedProvider();
-        // Auto-fill the default URL when the field is empty or held a different
-        // provider's default (mirrors Community lines 1341-1370).
-        String current = apiUrl.getText().trim();
-        if (current.isEmpty() || isAnyProviderDefault(current)) {
-            apiUrl.setText(p.defaultUrl());
+        settings.setProvider(p);
+        loading = true;
+        try {
+            showProviderFields(p);
+        } finally {
+            loading = false;
         }
         applyEnablement();
+        save();
     }
 
     private void applyEnablement() {
@@ -156,41 +242,78 @@ public class AiProviderTab extends JPanel {
         ollamaNumCtx.setEnabled(ollama);
 
         if (burpAi) {
-            statusLabel.setText("Burp AI runs in-process and uses your Burp AI Credits.");
+            statusLabel.setText("Burp AI uses your Burp AI credits; no API key needed.");
         } else {
             statusLabel.setText(" ");
         }
     }
 
     private void onRefreshModels() {
-        store();
-        ProviderId p = selectedProvider();
+        commitProviderFields();
+        commitGeneral();
+        ProviderId p = shownProvider;
         statusLabel.setText("Loading models...");
         refreshBtn.setEnabled(false);
-        new Thread(() -> {
-            List<String> models = dispatcher.get(p).listModels();
-            SwingUtilities.invokeLater(() -> {
-                setModels(models);
-                refreshBtn.setEnabled(true);
-                statusLabel.setText(models.isEmpty()
-                        ? "No models returned (check URL / key)."
-                        : models.size() + " models loaded.");
-            });
-        }, "silentchain-models").start();
+        boolean queued = threadPool.submitInteractive("model refresh", () -> {
+            List<String> models = List.of();
+            String failure = null;
+            try {
+                models = dispatcher.listModels(p);
+            } catch (RuntimeException e) {
+                failure = e.getClass().getSimpleName() + ": " + e.getMessage();
+                logging.logToError("SILENTCHAIN: model refresh failed for " + p.displayName(), e);
+            } finally {
+                List<String> result = models;
+                String message;
+                if (failure != null) {
+                    message = "FAILED: " + failure;
+                } else if (result.isEmpty()) {
+                    message = aiGate.isEnabled()
+                            ? "No models returned (check URL / key)."
+                            : "FAILED: " + AiGate.DISABLED_MESSAGE;
+                } else {
+                    message = result.size() + " models loaded.";
+                }
+                SwingUtilities.invokeLater(() -> {
+                    if (p == shownProvider) {
+                        setModels(result);
+                    }
+                    refreshBtn.setEnabled(true);
+                    statusLabel.setText(message);
+                });
+            }
+        });
+        if (!queued) {
+            refreshBtn.setEnabled(true);
+            statusLabel.setText("Busy; try again in a moment.");
+        }
     }
 
     private void onTestConnection() {
-        store();
-        ProviderId p = selectedProvider();
+        commitProviderFields();
+        commitGeneral();
+        ProviderId p = shownProvider;
         statusLabel.setText("Testing " + p.displayName() + "...");
         testBtn.setEnabled(false);
-        new Thread(() -> {
-            TestResult result = dispatcher.testConnection(p);
-            SwingUtilities.invokeLater(() -> {
-                testBtn.setEnabled(true);
-                statusLabel.setText((result.success() ? "OK: " : "FAILED: ") + result.message());
-            });
-        }, "silentchain-test").start();
+        boolean queued = threadPool.submitInteractive("test connection", () -> {
+            TestResult result = TestResult.fail("Test did not complete.");
+            try {
+                result = dispatcher.testConnection(p);
+            } catch (RuntimeException e) {
+                result = TestResult.fail(e.getClass().getSimpleName() + ": " + e.getMessage());
+                logging.logToError("SILENTCHAIN: test connection failed for " + p.displayName(), e);
+            } finally {
+                TestResult shown = result;
+                SwingUtilities.invokeLater(() -> {
+                    testBtn.setEnabled(true);
+                    statusLabel.setText((shown.success() ? "OK: " : "FAILED: ") + shown.message());
+                });
+            }
+        });
+        if (!queued) {
+            testBtn.setEnabled(true);
+            statusLabel.setText("Busy; try again in a moment.");
+        }
     }
 
     // ---- Helpers ------------------------------------------------------------
@@ -201,39 +324,24 @@ public class AiProviderTab extends JPanel {
     }
 
     private void setModels(List<String> models) {
-        String current = currentModelText();
-        DefaultComboBoxModel<String> model = new DefaultComboBoxModel<>();
-        for (String m : models) {
-            model.addElement(m);
+        boolean wasLoading = loading;
+        loading = true;
+        try {
+            String current = currentModelText();
+            DefaultComboBoxModel<String> model = new DefaultComboBoxModel<>();
+            for (String m : models) {
+                model.addElement(m);
+            }
+            modelCombo.setModel(model);
+            modelCombo.getEditor().setItem(current);
+        } finally {
+            loading = wasLoading;
         }
-        modelCombo.setModel(model);
-        modelCombo.getEditor().setItem(current);
-    }
-
-    private void setModel(String value) {
-        modelCombo.getEditor().setItem(value != null ? value : "");
     }
 
     private String currentModelText() {
         Object m = modelCombo.getEditor().getItem();
         return m != null ? m.toString() : "";
-    }
-
-    private static boolean isAnyProviderDefault(String url) {
-        for (ProviderId p : ProviderId.values()) {
-            if (!p.defaultUrl().isEmpty() && p.defaultUrl().equals(url)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static int parseInt(String s, int fallback) {
-        try {
-            return Integer.parseInt(s.trim());
-        } catch (NumberFormatException e) {
-            return fallback;
-        }
     }
 
     private JComponent modelRow() {
@@ -265,26 +373,30 @@ public class AiProviderTab extends JPanel {
 
     private void addHelp(int row) {
         JTextArea help = new JTextArea(
-                "Provider notes:\n" +
-                "  - Burp AI: default; in-process; uses Burp AI Credits; no key needed.\n" +
-                "  - Ollama: local; default http://localhost:11434; no key. Uses /api/chat with a\n" +
+                "Provider notes (every provider, Ollama included, needs 'Use AI' enabled for\n" +
+                "SILENTCHAIN in Extensions > Installed):\n" +
+                "  - Burp AI: default; sent through Burp to PortSwigger's Burp AI service; uses\n" +
+                "    Burp AI Credits; no key needed.\n" +
+                "  - Ollama: default http://localhost:11434; no key. Uses /api/chat with a\n" +
                 "    JSON schema forcing findings output. If a model returns no findings, raise\n" +
                 "    'Ollama context (num_ctx)' or keep 'Ollama structured output' = schema.\n" +
                 "  - OpenAI: https://api.openai.com/v1; Bearer API key.\n" +
                 "  - Claude: https://api.anthropic.com/v1; x-api-key.\n" +
-                "  - Gemini: https://generativelanguage.googleapis.com/v1; key in query.\n" +
+                "  - Gemini: https://generativelanguage.googleapis.com/v1; x-goog-api-key.\n" +
                 "  - Azure Foundry: https://<resource>.openai.azure.com; api-key header;\n" +
-                "    'Model' is the deployment name; set the API version.");
+                "    'Model' is the deployment name; set the API version.\n" +
+                "Each provider keeps its own URL, key and model. Fields apply on Enter or\n" +
+                "when you leave them.");
         help.setEditable(false);
         help.setOpaque(false);
         help.setBorder(null);
 
         GridBagConstraints c = new GridBagConstraints();
         c.gridx = 0; c.gridy = row; c.gridwidth = 2;
-        c.anchor = GridBagConstraints.WEST;
-        c.fill = GridBagConstraints.BOTH;
+        c.anchor = GridBagConstraints.NORTHWEST;
+        c.fill = GridBagConstraints.HORIZONTAL;
         c.weightx = 1.0; c.weighty = 1.0;
         c.insets = new Insets(10, 8, 8, 8);
-        add(new JScrollPane(help), c);
+        add(help, c);
     }
 }

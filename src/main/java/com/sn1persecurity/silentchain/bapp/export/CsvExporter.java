@@ -1,7 +1,6 @@
 package com.sn1persecurity.silentchain.bapp.export;
 
 import com.sn1persecurity.silentchain.bapp.state.FindingRow;
-import com.sn1persecurity.silentchain.bapp.state.FindingsRegistry;
 
 import javax.swing.JFileChooser;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -10,6 +9,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -19,6 +19,9 @@ import java.util.List;
  * (silentchain_ai_community.py:966-1004): header
  * "Discovered At,URL,Finding,Severity,Confidence", default file name
  * SILENTCHAIN_Findings_YYYYMMDD_HHMMSS.csv.
+ *
+ * Split in two so the caller can keep the file chooser on the EDT and do the
+ * file write on a background thread.
  */
 public final class CsvExporter {
 
@@ -26,29 +29,30 @@ public final class CsvExporter {
 
     private CsvExporter() {}
 
-    /**
-     * Show a save dialog and write the findings. Returns the written file path,
-     * or null if the user cancelled or there was nothing to write.
-     */
-    public static String export(Component parent, FindingsRegistry registry) {
-        List<FindingRow> rows = registry.snapshot();
-
+    /** Show a save dialog (EDT). Returns the chosen .csv path, or null if cancelled. */
+    public static Path chooseFile(Component parent) {
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Export SILENTCHAIN findings to CSV");
         chooser.setFileFilter(new FileNameExtensionFilter("CSV files (*.csv)", "csv"));
         String defaultName = "SILENTCHAIN_Findings_" + LocalDateTime.now().format(FILE_TS) + ".csv";
         chooser.setSelectedFile(new File(defaultName));
 
-        int result = chooser.showSaveDialog(parent);
-        if (result != JFileChooser.APPROVE_OPTION) {
+        if (chooser.showSaveDialog(parent) != JFileChooser.APPROVE_OPTION) {
             return null;
         }
-
         File file = chooser.getSelectedFile();
         if (!file.getName().toLowerCase().endsWith(".csv")) {
             file = new File(file.getParentFile(), file.getName() + ".csv");
         }
+        return file.toPath();
+    }
 
+    /** Write the rows as CSV (call off the EDT). */
+    public static void write(Path path, List<FindingRow> rows) throws IOException {
+        Files.write(path, toCsv(rows).getBytes(StandardCharsets.UTF_8));
+    }
+
+    static String toCsv(List<FindingRow> rows) {
         StringBuilder sb = new StringBuilder();
         sb.append("Discovered At,URL,Finding,Severity,Confidence\n");
         for (FindingRow r : rows) {
@@ -58,13 +62,7 @@ public final class CsvExporter {
               .append(escape(r.severity())).append(',')
               .append(escape(r.confidence())).append('\n');
         }
-
-        try {
-            Files.write(file.toPath(), sb.toString().getBytes(StandardCharsets.UTF_8));
-            return file.getAbsolutePath();
-        } catch (IOException e) {
-            return null;
-        }
+        return sb.toString();
     }
 
     /**

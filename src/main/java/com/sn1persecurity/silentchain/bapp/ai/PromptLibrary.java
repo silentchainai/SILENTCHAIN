@@ -15,6 +15,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 public class PromptLibrary {
 
@@ -26,6 +28,19 @@ public class PromptLibrary {
     private static final int MAX_HEADERS = 10;
     private static final int MAX_REQUEST_BODY_CHARS = 2_000;
     private static final int MAX_RESPONSE_BODY_CHARS = 3_000;
+    private static final int MAX_HEADER_VALUE_CHARS = 300;
+
+    static final String REDACTED = "[REDACTED]";
+
+    /**
+     * Headers whose values are credentials. Their values are always replaced,
+     * whatever the sanitizer toggle says: PortSwigger's AI guidance is to keep
+     * authentication tokens and session cookies out of AI requests, and
+     * value-pattern redaction alone misses cookies such as JSESSIONID.
+     */
+    private static final Set<String> CREDENTIAL_HEADERS = Set.of(
+            "authorization", "proxy-authorization", "x-api-key", "api-key", "x-auth-token",
+            "x-access-token", "x-csrf-token", "x-xsrf-token", "x-amz-security-token");
 
     private static final String SYSTEM_PROMPT = loadSystemPrompt();
 
@@ -99,7 +114,10 @@ public class PromptLibrary {
                 "Return ONLY a JSON object {\"findings\":[...]} as specified in your system instructions.";
     }
 
-    /** First {@link #MAX_HEADERS} headers as a JSON array of "Name: value" strings. */
+    /**
+     * First {@link #MAX_HEADERS} headers as a JSON array of "Name: value" strings,
+     * with credential values redacted and long values capped.
+     */
     private static JSONArray headers(List<HttpHeader> hdrs) {
         JSONArray arr = new JSONArray();
         if (hdrs == null) {
@@ -109,9 +127,63 @@ public class PromptLibrary {
             if (arr.length() >= MAX_HEADERS) {
                 break;
             }
-            arr.put(h.name() + ": " + h.value());
+            arr.put(h.name() + ": " + redactHeaderValue(h.name(), h.value()));
         }
         return arr;
+    }
+
+    /**
+     * The header value as it may be shown to the AI. Cookie names and Set-Cookie
+     * attributes (HttpOnly, Secure, SameSite...) are kept because they matter for
+     * the analysis; cookie values and credential header values are not. For
+     * Authorization-style headers the scheme ("Bearer", "Basic") is kept.
+     */
+    static String redactHeaderValue(String name, String value) {
+        if (value == null) {
+            return "";
+        }
+        String lower = name == null ? "" : name.trim().toLowerCase(Locale.ROOT);
+        if (lower.equals("cookie")) {
+            return redactCookiePairs(value, "; ");
+        }
+        if (lower.equals("set-cookie")) {
+            return redactSetCookie(value);
+        }
+        if (CREDENTIAL_HEADERS.contains(lower)) {
+            if (lower.equals("authorization") || lower.equals("proxy-authorization")) {
+                int space = value.trim().indexOf(' ');
+                if (space > 0) {
+                    return value.trim().substring(0, space) + " " + REDACTED;
+                }
+            }
+            return REDACTED;
+        }
+        return cap(value, MAX_HEADER_VALUE_CHARS);
+    }
+
+    /** "a=1; b=2" -> "a=[REDACTED]; b=[REDACTED]". */
+    private static String redactCookiePairs(String value, String joiner) {
+        StringBuilder out = new StringBuilder();
+        for (String pair : value.split(";")) {
+            String p = pair.trim();
+            if (p.isEmpty()) {
+                continue;
+            }
+            if (out.length() > 0) {
+                out.append(joiner);
+            }
+            int eq = p.indexOf('=');
+            out.append(eq >= 0 ? p.substring(0, eq).trim() : p).append('=').append(REDACTED);
+        }
+        return out.toString();
+    }
+
+    /** "id=abc; Path=/; HttpOnly" -> "id=[REDACTED]; Path=/; HttpOnly" (attributes kept). */
+    private static String redactSetCookie(String value) {
+        int semi = value.indexOf(';');
+        String first = semi >= 0 ? value.substring(0, semi) : value;
+        String attributes = semi >= 0 ? value.substring(semi) : "";
+        return redactCookiePairs(first, "; ") + cap(attributes, MAX_HEADER_VALUE_CHARS);
     }
 
     private static String cap(String s, int max) {

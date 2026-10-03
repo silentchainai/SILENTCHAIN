@@ -2,37 +2,44 @@ package com.sn1persecurity.silentchain.bapp.ui.main;
 
 import burp.api.montoya.MontoyaApi;
 
+import com.sn1persecurity.silentchain.bapp.ai.AiGate;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
 import com.sn1persecurity.silentchain.bapp.config.SettingsPersistence;
 import com.sn1persecurity.silentchain.bapp.export.CsvExporter;
+import com.sn1persecurity.silentchain.bapp.scan.AnalysisOrchestrator;
 import com.sn1persecurity.silentchain.bapp.state.Counters;
+import com.sn1persecurity.silentchain.bapp.state.FindingRow;
 import com.sn1persecurity.silentchain.bapp.state.FindingsRegistry;
 import com.sn1persecurity.silentchain.bapp.state.ScanState;
 import com.sn1persecurity.silentchain.bapp.state.TaskRegistry;
 import com.sn1persecurity.silentchain.bapp.ui.dialogs.DataConsentDialog;
+import com.sn1persecurity.silentchain.bapp.util.ThreadPool;
 
 import javax.swing.BoxLayout;
-import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.JSplitPane;
 import javax.swing.Timer;
 import java.awt.BorderLayout;
-import java.awt.Component;
 import java.awt.Desktop;
 import java.net.URI;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.function.LongSupplier;
 
 /**
- * Root SILENTCHAIN tab — assembles the Community-style single-tab layout and
- * drives a 1.5s refresh timer over the live state.
+ * Root SILENTCHAIN tab: assembles the Community-style single-tab layout and
+ * drives a 1.5s refresh timer over the live state. The timer is stopped by
+ * {@link #dispose()} from the extension's unloading handler.
  *
  * Layout:
  *   NORTH  : header + statistics + runtime status + control bar
- *   CENTER : vertical split — active tasks (top) / findings (bottom)
+ *   CENTER : vertical split: active tasks (top) / findings (bottom)
  *   SOUTH  : console pane
  */
 public class MainTab extends JPanel implements ControlBar.Actions {
 
     private static final String UPGRADE_URL = "https://silentchain.ai/?referral=silentchain_bapp";
+    private static final int REFRESH_MILLIS = 1500;
 
     private final MontoyaApi api;
     private final Settings settings;
@@ -40,7 +47,8 @@ public class MainTab extends JPanel implements ControlBar.Actions {
     private final ScanState scanState;
     private final TaskRegistry taskRegistry;
     private final FindingsRegistry findingsRegistry;
-    private Runnable settingsOpener;
+    private final AnalysisOrchestrator orchestrator;
+    private final ThreadPool threadPool;
 
     private final StatisticsPanel statisticsPanel;
     private final RuntimeStatusLine runtimeStatusLine;
@@ -48,6 +56,9 @@ public class MainTab extends JPanel implements ControlBar.Actions {
     private final TaskTablePanel taskTablePanel;
     private final FindingsTablePanel findingsTablePanel;
     private final ConsolePane consolePane;
+    private final Timer refreshTimer;
+
+    private boolean refreshFailureLogged;
 
     public MainTab(MontoyaApi api,
                    Settings settings,
@@ -55,7 +66,11 @@ public class MainTab extends JPanel implements ControlBar.Actions {
                    ScanState scanState,
                    Counters counters,
                    TaskRegistry taskRegistry,
-                   FindingsRegistry findingsRegistry) {
+                   FindingsRegistry findingsRegistry,
+                   AnalysisOrchestrator orchestrator,
+                   ThreadPool threadPool,
+                   AiGate aiGate,
+                   LongSupplier lastPassiveCallbackMillis) {
         super(new BorderLayout());
         this.api = api;
         this.settings = settings;
@@ -63,9 +78,11 @@ public class MainTab extends JPanel implements ControlBar.Actions {
         this.scanState = scanState;
         this.taskRegistry = taskRegistry;
         this.findingsRegistry = findingsRegistry;
+        this.orchestrator = orchestrator;
+        this.threadPool = threadPool;
 
         this.statisticsPanel = new StatisticsPanel(counters);
-        this.runtimeStatusLine = new RuntimeStatusLine(settings, scanState);
+        this.runtimeStatusLine = new RuntimeStatusLine(settings, scanState, aiGate, lastPassiveCallbackMillis);
         this.controlBar = new ControlBar(settings, scanState, this);
         this.taskTablePanel = new TaskTablePanel(taskRegistry);
         this.findingsTablePanel = new FindingsTablePanel(findingsRegistry);
@@ -89,14 +106,31 @@ public class MainTab extends JPanel implements ControlBar.Actions {
         // Bridge the console log so ScanState.info/debug/error mirror into the pane.
         scanState.setConsoleSink(consolePane::append);
 
-        startRefreshTimer();
+        refreshTimer = new Timer(REFRESH_MILLIS, e -> refreshSafely());
+        refreshTimer.setInitialDelay(500);
+        refreshTimer.start();
         refreshNow();
     }
 
-    private void startRefreshTimer() {
-        Timer timer = new Timer(1500, e -> refreshNow());
-        timer.setInitialDelay(500);
-        timer.start();
+    /** Stop the refresh timer (thread-safe; called from the unloading handler). */
+    public void dispose() {
+        refreshTimer.stop();
+    }
+
+    boolean refreshTimerRunning() {
+        return refreshTimer.isRunning();
+    }
+
+    private void refreshSafely() {
+        try {
+            refreshNow();
+        } catch (Throwable t) {
+            // Log once: this fires every 1.5s, so repeating it would flood the error pane.
+            if (!refreshFailureLogged) {
+                refreshFailureLogged = true;
+                api.logging().logToError("SILENTCHAIN: tab refresh failed", t);
+            }
+        }
     }
 
     private void refreshNow() {
@@ -107,18 +141,13 @@ public class MainTab extends JPanel implements ControlBar.Actions {
         findingsTablePanel.refresh();
     }
 
-    /** Re-apply the console theme (called after a Settings save changes it). */
+    /** Re-apply the console theme. */
     public void applyTheme() {
         consolePane.applyTheme(settings.theme());
     }
 
-    /** Wire the Settings button to open the modal dialog (set post-construction). */
-    public void setSettingsOpener(Runnable opener) {
-        this.settingsOpener = opener;
-    }
-
-    /** Called after the Settings dialog saves: re-theme + refresh immediately. */
-    public void onSettingsSaved() {
+    /** Called whenever a value changes in SILENTCHAIN's settings panel. */
+    public void onSettingsChanged() {
         applyTheme();
         refreshNow();
     }
@@ -127,9 +156,8 @@ public class MainTab extends JPanel implements ControlBar.Actions {
 
     @Override
     public void onSettings() {
-        if (settingsOpener != null) {
-            settingsOpener.run();
-        }
+        // Settings live in Burp's own Settings window (registerSettingsPanel).
+        api.userInterface().openSettingsWindow();
     }
 
     @Override
@@ -137,7 +165,7 @@ public class MainTab extends JPanel implements ControlBar.Actions {
         boolean now = !settings.passiveEnabled();
 
         // Consent gate when enabling passive analysis.
-        if (now && !DataConsentDialog.ensureConsent(api, persistence)) {
+        if (now && !DataConsentDialog.ensureConsent(api, persistence, this)) {
             controlBar.refresh();
             scanState.info("SILENTCHAIN: scanning not started (consent declined).");
             return;
@@ -159,7 +187,7 @@ public class MainTab extends JPanel implements ControlBar.Actions {
 
     @Override
     public void onCancelAll() {
-        int cancelled = taskRegistry.cancelAll();
+        int cancelled = orchestrator.cancelAll();
         taskTablePanel.refresh();
         scanState.info("SILENTCHAIN: cancelled " + cancelled + " task(s).");
     }
@@ -174,32 +202,36 @@ public class MainTab extends JPanel implements ControlBar.Actions {
 
     @Override
     public void onExportCsv() {
-        String path = CsvExporter.export(this, findingsRegistry);
-        if (path != null) {
-            scanState.info("SILENTCHAIN: exported findings to " + path);
-        } else {
-            scanState.info("SILENTCHAIN: CSV export cancelled or failed.");
+        Path path = CsvExporter.chooseFile(this);
+        if (path == null) {
+            scanState.info("SILENTCHAIN: CSV export cancelled.");
+            return;
+        }
+        List<FindingRow> rows = findingsRegistry.snapshot();
+        boolean queued = threadPool.submitInteractive("CSV export", () -> {
+            try {
+                CsvExporter.write(path, rows);
+                scanState.info("SILENTCHAIN: exported " + rows.size() + " finding(s) to " + path);
+            } catch (Exception e) {
+                api.logging().logToError("SILENTCHAIN: CSV export to " + path + " failed", e);
+                scanState.console("[ERROR] CSV export failed: " + e.getMessage());
+            }
+        });
+        if (!queued) {
+            scanState.info("SILENTCHAIN: CSV export not started (busy); try again.");
         }
     }
 
     @Override
     public void onUpgrade() {
-        try {
-            if (Desktop.isDesktopSupported()) {
-                Desktop.getDesktop().browse(new URI(UPGRADE_URL));
+        threadPool.submitInteractive("open upgrade page", () -> {
+            try {
+                if (Desktop.isDesktopSupported()) {
+                    Desktop.getDesktop().browse(new URI(UPGRADE_URL));
+                }
+            } catch (Exception e) {
+                api.logging().logToError("Failed to open upgrade page: " + e.getMessage());
             }
-        } catch (Throwable t) {
-            api.logging().logToError("Failed to open upgrade page: " + t.getMessage());
-        }
-    }
-
-    /** Convenience for registration. */
-    public JComponent component() {
-        return this;
-    }
-
-    @SuppressWarnings("unused")
-    private static Component noop() {
-        return null;
+        });
     }
 }

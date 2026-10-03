@@ -1,6 +1,7 @@
 package com.sn1persecurity.silentchain.bapp.data;
 
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 public enum OwaspCategory {
     A01_BROKEN_ACCESS_CONTROL("A01:2021", "Broken Access Control",                  "CWE-284"),
@@ -14,6 +15,9 @@ public enum OwaspCategory {
     A09_LOGGING_FAILURES("A09:2021",       "Security Logging and Monitoring Failures", "CWE-778"),
     A10_SSRF("A10:2021",                   "Server-Side Request Forgery",            "CWE-918"),
     UNKNOWN("",                            "Uncategorized",                          "CWE-693");
+
+    private static final Pattern NON_DIGITS = Pattern.compile("[^0-9]");
+    private static final Pattern CWE_ID = Pattern.compile("CWE-\\d+");
 
     private final String code;
     private final String displayName;
@@ -56,9 +60,9 @@ public enum OwaspCategory {
         }
         String s = raw.trim().toUpperCase();
         if (!s.startsWith("CWE-")) {
-            s = "CWE-" + s.replaceAll("[^0-9]", "");
+            s = "CWE-" + NON_DIGITS.matcher(s).replaceAll("");
         }
-        if (s.matches("CWE-\\d+")) {
+        if (CWE_ID.matcher(s).matches()) {
             return Optional.of(s);
         }
         return Optional.empty();

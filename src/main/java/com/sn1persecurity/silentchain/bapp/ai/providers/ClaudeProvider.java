@@ -2,7 +2,9 @@ package com.sn1persecurity.silentchain.bapp.ai.providers;
 
 import burp.api.montoya.MontoyaApi;
 
+import com.sn1persecurity.silentchain.bapp.ai.AiGate;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
+import com.sn1persecurity.silentchain.bapp.config.Settings.ProviderConfig;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient.HttpReply;
 
@@ -33,11 +35,13 @@ public class ClaudeProvider implements LlmProvider {
     private final MontoyaApi api;
     private final MontoyaHttpClient http;
     private final Settings settings;
+    private final AiGate aiGate;
 
-    public ClaudeProvider(MontoyaApi api, MontoyaHttpClient http, Settings settings) {
+    public ClaudeProvider(MontoyaApi api, MontoyaHttpClient http, Settings settings, AiGate aiGate) {
         this.api = api;
         this.http = http;
         this.settings = settings;
+        this.aiGate = aiGate;
     }
 
     @Override public ProviderId id() { return ProviderId.CLAUDE; }
@@ -45,13 +49,18 @@ public class ClaudeProvider implements LlmProvider {
     @Override public boolean usesApiKey() { return true; }
 
     @Override
+    public boolean isConfigured() {
+        return !baseUrl().isBlank() && !cfg().apiKey().isBlank();
+    }
+
+    @Override
     public boolean isAvailable() {
-        return !baseUrl().isBlank() && !settings.apiKey().isBlank();
+        return aiGate.isEnabled() && isConfigured();
     }
 
     @Override
     public List<String> listModels() {
-        if (settings.apiKey().isBlank()) return List.of();
+        if (!aiGate.isEnabled() || cfg().apiKey().isBlank()) return List.of();
         HttpReply r = http.get(baseUrl() + "/models", authHeaders());
         if (!r.ok()) return List.of();
         try {
@@ -74,11 +83,14 @@ public class ClaudeProvider implements LlmProvider {
 
     @Override
     public Optional<String> analyze(String systemPrompt, String userPrompt) {
-        if (!isAvailable()) {
+        if (!aiGate.isEnabled()) {
+            return Optional.empty();
+        }
+        if (!isConfigured()) {
             api.logging().logToError("Claude: missing API URL or API key.");
             return Optional.empty();
         }
-        String model = settings.model();
+        String model = cfg().model();
         if (model.isBlank()) model = "claude-3-5-sonnet-latest";
 
         JSONObject body = new JSONObject();
@@ -114,8 +126,9 @@ public class ClaudeProvider implements LlmProvider {
 
     @Override
     public TestResult testConnection() {
+        if (!aiGate.isEnabled()) return TestResult.fail(AiGate.DISABLED_MESSAGE);
         if (baseUrl().isBlank()) return TestResult.fail("Claude URL is empty.");
-        if (settings.apiKey().isBlank()) return TestResult.fail("Claude API key is empty.");
+        if (cfg().apiKey().isBlank()) return TestResult.fail("Claude API key is empty.");
         HttpReply r = http.get(baseUrl() + "/models", authHeaders());
         if (r.status() == 0) return TestResult.fail("Claude unreachable (DNS / TLS / connection error).");
         if (r.status() == 401) return TestResult.fail("Claude rejected the API key (HTTP 401).");
@@ -125,14 +138,18 @@ public class ClaudeProvider implements LlmProvider {
 
     private Map<String, String> authHeaders() {
         Map<String, String> h = new LinkedHashMap<>();
-        h.put("x-api-key", settings.apiKey());
+        h.put("x-api-key", cfg().apiKey());
         h.put("anthropic-version", ANTHROPIC_VERSION);
         return h;
     }
 
+    private ProviderConfig cfg() {
+        return settings.config(id());
+    }
+
     private String baseUrl() {
-        String configured = settings.apiUrl();
-        String url = configured != null && !configured.isBlank() ? configured : id().defaultUrl();
+        String configured = cfg().apiUrl();
+        String url = !configured.isBlank() ? configured : id().defaultUrl();
         return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 

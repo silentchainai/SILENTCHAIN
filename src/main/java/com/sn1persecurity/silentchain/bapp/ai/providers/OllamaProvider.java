@@ -2,6 +2,7 @@ package com.sn1persecurity.silentchain.bapp.ai.providers;
 
 import burp.api.montoya.MontoyaApi;
 
+import com.sn1persecurity.silentchain.bapp.ai.AiGate;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
 import com.sn1persecurity.silentchain.bapp.config.Settings.StructuredOutput;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient;
@@ -15,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * Ollama provider.
@@ -35,22 +37,26 @@ import java.util.Optional;
  * so reasoning models (qwen3, deepseek-r1) skip the slow &lt;think&gt; phase that
  * otherwise overruns the request timeout.
  *
- * No API key.
+ * No API key. Gated on Burp's AI permission like every other provider: the
+ * endpoint is user-configurable and need not be local.
  */
 public class OllamaProvider implements LlmProvider {
 
     private static final String CHAT_ENDPOINT = "/api/chat";
     private static final double TEMPERATURE = 0.0;
     private static final String KEEP_ALIVE = "10m";
+    private static final Pattern EMPTY_OBJECT = Pattern.compile("\\{\\s*\\}");
 
     private final MontoyaApi api;
     private final MontoyaHttpClient http;
     private final Settings settings;
+    private final AiGate aiGate;
 
-    public OllamaProvider(MontoyaApi api, MontoyaHttpClient http, Settings settings) {
+    public OllamaProvider(MontoyaApi api, MontoyaHttpClient http, Settings settings, AiGate aiGate) {
         this.api = api;
         this.http = http;
         this.settings = settings;
+        this.aiGate = aiGate;
     }
 
     @Override public ProviderId id() { return ProviderId.OLLAMA; }
@@ -58,12 +64,18 @@ public class OllamaProvider implements LlmProvider {
     @Override public boolean usesApiKey() { return false; }
 
     @Override
-    public boolean isAvailable() {
+    public boolean isConfigured() {
         return !baseUrl().isBlank();
     }
 
     @Override
+    public boolean isAvailable() {
+        return aiGate.isEnabled() && isConfigured();
+    }
+
+    @Override
     public List<String> listModels() {
+        if (!aiGate.isEnabled()) return List.of();
         String url = baseUrl() + "/api/tags";
         HttpReply r = http.get(url, Collections.emptyMap());
         if (!r.ok()) return List.of();
@@ -87,6 +99,9 @@ public class OllamaProvider implements LlmProvider {
 
     @Override
     public Optional<String> analyze(String systemPrompt, String userPrompt) {
+        if (!aiGate.isEnabled()) {
+            return Optional.empty();
+        }
         String model = resolveModel();
         if (model.isBlank()) {
             return Optional.empty();
@@ -118,7 +133,10 @@ public class OllamaProvider implements LlmProvider {
 
     @Override
     public TestResult testConnection() {
-        if (!isAvailable()) {
+        if (!aiGate.isEnabled()) {
+            return TestResult.fail(AiGate.DISABLED_MESSAGE);
+        }
+        if (!isConfigured()) {
             return TestResult.fail("Ollama URL is empty.");
         }
         HttpReply r = http.get(baseUrl() + "/api/tags", Collections.emptyMap());
@@ -272,7 +290,7 @@ public class OllamaProvider implements LlmProvider {
             }
             t = t.trim();
         }
-        return t.matches("\\{\\s*\\}");
+        return EMPTY_OBJECT.matcher(t).matches();
     }
 
     // ---- Helpers ------------------------------------------------------------
@@ -283,7 +301,7 @@ public class OllamaProvider implements LlmProvider {
      * available.
      */
     private String resolveModel() {
-        String model = settings.model();
+        String model = settings.config(id()).model();
         if (!model.isBlank()) {
             return model;
         }
@@ -301,8 +319,8 @@ public class OllamaProvider implements LlmProvider {
     }
 
     private String baseUrl() {
-        String configured = settings.apiUrl();
-        String url = configured != null && !configured.isBlank() ? configured : id().defaultUrl();
+        String configured = settings.config(id()).apiUrl();
+        String url = !configured.isBlank() ? configured : id().defaultUrl();
         return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 }

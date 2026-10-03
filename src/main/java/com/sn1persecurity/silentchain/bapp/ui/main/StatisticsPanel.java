@@ -28,7 +28,7 @@ public class StatisticsPanel extends JPanel {
     private final JLabel skippedRate = valueLabel();
     private final JLabel skippedLowConf = valueLabel();
     private final JLabel findingsCreated = valueLabel();
-    private final JLabel cacheHits = valueLabel();
+    private final JLabel skippedBacklog = valueLabel();
     private final JLabel errors = valueLabel();
 
     public StatisticsPanel(Counters counters) {
@@ -44,7 +44,7 @@ public class StatisticsPanel extends JPanel {
         grid.add(cell("Skipped (Rate Limit):", skippedRate));
         grid.add(cell("Skipped (Low Confidence):", skippedLowConf));
         grid.add(cell("Findings Created:", findingsCreated));
-        grid.add(cell("Cache Hits:", cacheHits));
+        grid.add(cell("Skipped (Backlog):", skippedBacklog));
         grid.add(cell("Errors:", errors));
         add(grid);
     }
@@ -52,7 +52,7 @@ public class StatisticsPanel extends JPanel {
     @Override
     public Dimension getMaximumSize() {
         // Fill width (so it is centered relative to the whole tab) but keep
-        // the natural height — never stretch vertically.
+        // the natural height - never stretch vertically.
         return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
     }
 
@@ -63,7 +63,7 @@ public class StatisticsPanel extends JPanel {
         skippedRate.setText(Long.toString(counters.skippedRateLimit()));
         skippedLowConf.setText(Long.toString(counters.skippedLowConfidence()));
         findingsCreated.setText(Long.toString(counters.findingsCreated()));
-        cacheHits.setText(Long.toString(counters.cacheHits()));
+        skippedBacklog.setText(Long.toString(counters.skippedBacklog()));
         errors.setText(Long.toString(counters.errors()));
     }
 

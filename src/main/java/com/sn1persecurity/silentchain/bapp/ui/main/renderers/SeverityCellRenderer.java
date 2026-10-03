@@ -3,7 +3,6 @@ package com.sn1persecurity.silentchain.bapp.ui.main.renderers;
 import javax.swing.JLabel;
 import javax.swing.JTable;
 import javax.swing.SwingConstants;
-import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Font;
@@ -12,7 +11,7 @@ import java.awt.Font;
  * Color-background renderer for the Severity column of the Findings table.
  * Palette ported from Community (silentchain_ai_community.py:2864-2887).
  */
-public class SeverityCellRenderer extends DefaultTableCellRenderer {
+public class SeverityCellRenderer extends PlainTextCellRenderer {
 
     private static final Color HIGH_BG   = new Color(0xC8, 0x00, 0x00);
     private static final Color MEDIUM_BG = new Color(0xFF, 0x8C, 0x00);

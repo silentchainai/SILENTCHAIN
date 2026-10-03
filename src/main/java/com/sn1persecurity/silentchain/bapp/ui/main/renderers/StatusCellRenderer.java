@@ -2,7 +2,6 @@ package com.sn1persecurity.silentchain.bapp.ui.main.renderers;
 
 import javax.swing.JLabel;
 import javax.swing.JTable;
-import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Font;
@@ -11,7 +10,7 @@ import java.awt.Font;
  * Color-codes the Status column of the Active Tasks table.
  * Palette ported from Community (silentchain_ai_community.py:2835-2862).
  */
-public class StatusCellRenderer extends DefaultTableCellRenderer {
+public class StatusCellRenderer extends PlainTextCellRenderer {
 
     private static final Color CANCELLED = new Color(0x96, 0x00, 0x00);
     private static final Color PAUSED    = new Color(0x96, 0x96, 0x00);

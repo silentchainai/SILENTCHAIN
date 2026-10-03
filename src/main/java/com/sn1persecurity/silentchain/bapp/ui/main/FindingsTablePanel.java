@@ -3,6 +3,7 @@ package com.sn1persecurity.silentchain.bapp.ui.main;
 import com.sn1persecurity.silentchain.bapp.state.FindingRow;
 import com.sn1persecurity.silentchain.bapp.state.FindingsRegistry;
 import com.sn1persecurity.silentchain.bapp.ui.main.renderers.ConfidenceCellRenderer;
+import com.sn1persecurity.silentchain.bapp.ui.main.renderers.PlainTextCellRenderer;
 import com.sn1persecurity.silentchain.bapp.ui.main.renderers.SeverityCellRenderer;
 
 import javax.swing.BorderFactory;
@@ -38,6 +39,8 @@ public class FindingsTablePanel extends JPanel {
         statsLine.setBorder(BorderFactory.createEmptyBorder(2, 6, 4, 6));
 
         table.setAutoCreateRowSorter(true);
+        // Titles come from the AI and URLs from the target: never render them as HTML.
+        table.setDefaultRenderer(Object.class, new PlainTextCellRenderer());
         table.getColumnModel().getColumn(3).setCellRenderer(new SeverityCellRenderer());
         table.getColumnModel().getColumn(4).setCellRenderer(new ConfidenceCellRenderer());
         setPreferredWidth(0, 150);

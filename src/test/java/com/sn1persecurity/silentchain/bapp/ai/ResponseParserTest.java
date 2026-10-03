@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ResponseParserTest {
@@ -106,5 +107,33 @@ class ResponseParserTest {
         assertEquals(2, out.size());
         assertEquals("Reflected XSS in 'tfSearch'", out.get(0).title());
         assertEquals("Server Version Disclosure", out.get(1).title());
+    }
+
+    /**
+     * AI output is untrusted: a title that tries to smuggle markup into the Swing
+     * tables or the Burp issue name is reduced to inert text.
+     */
+    @Test
+    void titleMarkupAndControlCharactersAreNeutralized() {
+        String hostile = "{\"findings\":[{\"title\":\"<html><img src=http://evil/x>\\u0000Reflected\\nXSS\"}]}";
+        List<ParsedFinding> out = ResponseParser.parse(hostile);
+
+        assertEquals(1, out.size());
+        String title = out.get(0).title();
+        assertFalse(title.contains("<") || title.contains(">"), title);
+        assertFalse(title.chars().anyMatch(Character::isISOControl), title);
+        assertEquals("htmlimg src=http://evil/x Reflected XSS", title);
+    }
+
+    @Test
+    void titleIsCappedAndWhitespaceCollapsed() {
+        assertEquals(ResponseParser.MAX_TITLE_CHARS, ResponseParser.sanitizeTitle("x".repeat(5_000)).length());
+        assertEquals("SQL Injection in id", ResponseParser.sanitizeTitle("  SQL \t Injection\r\n in   id  "));
+        assertEquals("", ResponseParser.sanitizeTitle("<<>>"));
+    }
+
+    @Test
+    void titleThatIsOnlyMarkupIsDropped() {
+        assertTrue(ResponseParser.parse("[{\"title\":\"<>\"}]").isEmpty());
     }
 }

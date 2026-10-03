@@ -2,6 +2,7 @@ package com.sn1persecurity.silentchain.bapp.ui.main;
 
 import com.sn1persecurity.silentchain.bapp.state.ScanTask;
 import com.sn1persecurity.silentchain.bapp.state.TaskRegistry;
+import com.sn1persecurity.silentchain.bapp.ui.main.renderers.PlainTextCellRenderer;
 import com.sn1persecurity.silentchain.bapp.ui.main.renderers.StatusCellRenderer;
 
 import javax.swing.BorderFactory;
@@ -30,6 +31,8 @@ public class TaskTablePanel extends JPanel {
         setBorder(BorderFactory.createTitledBorder("Active Tasks"));
 
         table.setAutoCreateRowSorter(true);
+        // Titles come from the AI and URLs from the target: never render them as HTML.
+        table.setDefaultRenderer(Object.class, new PlainTextCellRenderer());
         table.getColumnModel().getColumn(3).setCellRenderer(new StatusCellRenderer());
         setPreferredWidth(0, 150);
         setPreferredWidth(1, 120);

@@ -1,36 +1,115 @@
 package com.sn1persecurity.silentchain.bapp.util;
 
+import burp.api.montoya.logging.Logging;
+
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * The extension's only background executors.
+ *
+ * <ul>
+ *   <li><b>analysis</b> - AI analysis jobs (passive scan check + context menu).
+ *       Bounded queue, so a slow provider can never accumulate an unbounded
+ *       backlog of retained HTTP messages.</li>
+ *   <li><b>interactive</b> - short user-initiated actions (Test Connection,
+ *       model refresh, CSV export, opening a browser). Kept separate so they
+ *       never queue behind multi-second AI calls.</li>
+ * </ul>
+ *
+ * Every task is wrapped in try/catch(Throwable) and failures are written to the
+ * extension error stream: Burp does not report exceptions from extension
+ * threads, and {@code ExecutorService.submit} would silently keep them in a
+ * discarded Future. {@link #shutdownNow()} is called from the unloading handler.
+ */
 public class ThreadPool {
 
-    private final ExecutorService executor;
+    private static final int ANALYSIS_THREADS = 2;
+    private static final int ANALYSIS_QUEUE = 128;
+    private static final int INTERACTIVE_QUEUE = 8;
+    private static final long AWAIT_SECONDS = 2;
 
-    public ThreadPool() {
-        AtomicInteger counter = new AtomicInteger();
-        this.executor = Executors.newFixedThreadPool(2, r -> {
-            Thread t = new Thread(r, "silentchain-ai-" + counter.incrementAndGet());
-            t.setDaemon(true);
-            return t;
-        });
+    private final Logging logging;
+    private final Lifecycle lifecycle;
+    private final ThreadPoolExecutor analysis;
+    private final ThreadPoolExecutor interactive;
+
+    public ThreadPool(Logging logging, Lifecycle lifecycle) {
+        this.logging = logging;
+        this.lifecycle = lifecycle;
+        this.analysis = new ThreadPoolExecutor(ANALYSIS_THREADS, ANALYSIS_THREADS, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(ANALYSIS_QUEUE), daemonThreads("silentchain-ai-"),
+                new ThreadPoolExecutor.AbortPolicy());
+        this.interactive = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(INTERACTIVE_QUEUE), daemonThreads("silentchain-ui-"),
+                new ThreadPoolExecutor.AbortPolicy());
     }
 
-    public void submit(Runnable task) {
-        executor.submit(task);
+    /** Queue an AI analysis job. Returns false if the queue is full or the pool is shut down. */
+    public boolean submitAnalysis(String what, Runnable task) {
+        return submit(analysis, what, task);
     }
 
-    public void shutdown() {
-        executor.shutdown();
+    /** Queue a short user-initiated action. Returns false if it could not be queued. */
+    public boolean submitInteractive(String what, Runnable task) {
+        return submit(interactive, what, task);
+    }
+
+    /**
+     * Stop everything: queued work is discarded (it must not start after
+     * unload), running work is interrupted, then each pool is given a short
+     * grace period.
+     */
+    public void shutdownNow() {
+        analysis.shutdownNow();
+        interactive.shutdownNow();
+        awaitQuietly(analysis, "analysis");
+        awaitQuietly(interactive, "interactive");
+    }
+
+    private boolean submit(ExecutorService executor, String what, Runnable task) {
         try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
+            executor.execute(guard(what, task));
+            return true;
+        } catch (RejectedExecutionException e) {
+            return false;
+        }
+    }
+
+    private Runnable guard(String what, Runnable task) {
+        return () -> {
+            try {
+                task.run();
+            } catch (Throwable t) {
+                if (!lifecycle.isUnloading()) {
+                    logging.logToError("SILENTCHAIN: background task failed (" + what + ")", t);
+                }
+            }
+        };
+    }
+
+    private void awaitQuietly(ExecutorService executor, String name) {
+        try {
+            if (!executor.awaitTermination(AWAIT_SECONDS, TimeUnit.SECONDS)) {
+                logging.logToOutput("SILENTCHAIN: " + name + " worker still finishing an in-flight request; "
+                        + "it has been interrupted and will exit when the request returns.");
             }
         } catch (InterruptedException e) {
-            executor.shutdownNow();
             Thread.currentThread().interrupt();
         }
+    }
+
+    private static ThreadFactory daemonThreads(String prefix) {
+        AtomicInteger counter = new AtomicInteger();
+        return r -> {
+            Thread t = new Thread(r, prefix + counter.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        };
     }
 }

@@ -2,7 +2,9 @@ package com.sn1persecurity.silentchain.bapp.ai.providers;
 
 import burp.api.montoya.MontoyaApi;
 
+import com.sn1persecurity.silentchain.bapp.ai.AiGate;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
+import com.sn1persecurity.silentchain.bapp.config.Settings.ProviderConfig;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient.HttpReply;
 
@@ -12,7 +14,6 @@ import org.json.JSONObject;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -24,8 +25,8 @@ import java.util.Optional;
  * Endpoint shape (default URL https://YOUR-RESOURCE.openai.azure.com):
  *   POST /openai/deployments/{deployment}/chat/completions?api-version={ver}
  *
- * The {@link Settings#model()} field stores the Azure deployment name, NOT a
- * model id. Azure does not expose a /models list per deployment; we report the
+ * The provider's "model" field stores the Azure deployment name, NOT a model
+ * id. Azure does not expose a /models list per deployment; we report the
  * single configured deployment as the available "model".
  *
  * Auth: api-key header.
@@ -35,11 +36,13 @@ public class AzureFoundryProvider implements LlmProvider {
     private final MontoyaApi api;
     private final MontoyaHttpClient http;
     private final Settings settings;
+    private final AiGate aiGate;
 
-    public AzureFoundryProvider(MontoyaApi api, MontoyaHttpClient http, Settings settings) {
+    public AzureFoundryProvider(MontoyaApi api, MontoyaHttpClient http, Settings settings, AiGate aiGate) {
         this.api = api;
         this.http = http;
         this.settings = settings;
+        this.aiGate = aiGate;
     }
 
     @Override public ProviderId id() { return ProviderId.AZURE_FOUNDRY; }
@@ -47,27 +50,38 @@ public class AzureFoundryProvider implements LlmProvider {
     @Override public boolean usesApiKey() { return true; }
 
     @Override
-    public boolean isAvailable() {
+    public boolean isConfigured() {
+        ProviderConfig cfg = cfg();
         return !baseUrl().isBlank()
-                && !settings.apiKey().isBlank()
-                && !settings.model().isBlank()
+                && !cfg.apiKey().isBlank()
+                && !cfg.model().isBlank()
                 && !settings.azureApiVersion().isBlank();
     }
 
     @Override
+    public boolean isAvailable() {
+        return aiGate.isEnabled() && isConfigured();
+    }
+
+    @Override
     public List<String> listModels() {
-        return settings.model().isBlank() ? List.of() : List.of(settings.model());
+        String deployment = cfg().model();
+        return deployment.isBlank() ? List.of() : List.of(deployment);
     }
 
     @Override
     public Optional<String> analyze(String systemPrompt, String userPrompt) {
-        if (!isAvailable()) {
+        if (!aiGate.isEnabled()) {
+            return Optional.empty();
+        }
+        if (!isConfigured()) {
             api.logging().logToError("Azure Foundry: missing URL / key / deployment / api-version.");
             return Optional.empty();
         }
+        ProviderConfig cfg = cfg();
 
         String url = baseUrl()
-                + "/openai/deployments/" + enc(settings.model())
+                + "/openai/deployments/" + enc(cfg.model())
                 + "/chat/completions?api-version=" + enc(settings.azureApiVersion());
 
         JSONObject body = new JSONObject();
@@ -79,7 +93,7 @@ public class AzureFoundryProvider implements LlmProvider {
         messages.put(new JSONObject().put("role", "user").put("content", userPrompt));
         body.put("messages", messages);
 
-        Map<String, String> headers = Map.of("api-key", settings.apiKey());
+        Map<String, String> headers = Map.of("api-key", cfg.apiKey());
 
         HttpReply r = http.postJson(url, headers, body.toString());
         if (!r.ok()) {
@@ -101,9 +115,10 @@ public class AzureFoundryProvider implements LlmProvider {
 
     @Override
     public TestResult testConnection() {
+        if (!aiGate.isEnabled()) return TestResult.fail(AiGate.DISABLED_MESSAGE);
         if (baseUrl().isBlank()) return TestResult.fail("Azure URL is empty.");
-        if (settings.apiKey().isBlank()) return TestResult.fail("Azure API key is empty.");
-        if (settings.model().isBlank()) return TestResult.fail("Azure deployment name is empty.");
+        if (cfg().apiKey().isBlank()) return TestResult.fail("Azure API key is empty.");
+        if (cfg().model().isBlank()) return TestResult.fail("Azure deployment name is empty.");
 
         // Minimal round-trip via a one-token prompt.
         Optional<String> reply = analyze(
@@ -115,9 +130,13 @@ public class AzureFoundryProvider implements LlmProvider {
         return TestResult.ok("Azure deployment responded.");
     }
 
+    private ProviderConfig cfg() {
+        return settings.config(id());
+    }
+
     private String baseUrl() {
-        String configured = settings.apiUrl();
-        String url = configured != null && !configured.isBlank() ? configured : id().defaultUrl();
+        String configured = cfg().apiUrl();
+        String url = !configured.isBlank() ? configured : id().defaultUrl();
         return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 
