@@ -3,6 +3,7 @@ package com.sn1persecurity.silentchain.bapp.ai.providers;
 import burp.api.montoya.MontoyaApi;
 
 import com.sn1persecurity.silentchain.bapp.ai.AiGate;
+import com.sn1persecurity.silentchain.bapp.ai.AiNotSentException;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
 import com.sn1persecurity.silentchain.bapp.config.Settings.ProviderConfig;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient;
@@ -87,11 +88,11 @@ public class GeminiProvider implements LlmProvider {
     @Override
     public Optional<String> analyze(String systemPrompt, String userPrompt) {
         if (!aiGate.isEnabled()) {
-            return Optional.empty();
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);
         }
         if (!isConfigured()) {
             api.logging().logToError("Gemini: missing API URL or API key.");
-            return Optional.empty();
+            throw new AiNotSentException("Gemini is not configured.");
         }
         String model = cfg().model();
         if (model.isBlank()) model = "gemini-1.5-flash";
@@ -121,6 +122,9 @@ public class GeminiProvider implements LlmProvider {
         body.put("generationConfig", genConfig);
 
         HttpReply r = http.postJson(url, authHeaders(), body.toString());
+        if (r.status() == MontoyaHttpClient.STATUS_AI_DISABLED) {
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);
+        }
         if (!r.ok()) {
             api.logging().logToError("Gemini HTTP " + r.status() + ": " + truncate(r.body()));
             return Optional.empty();

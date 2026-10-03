@@ -136,29 +136,69 @@ public class SettingsPersistence {
 
     /**
      * 1.4 mirrors the selected third-party provider into the legacy single keys
-     * on every save, so if they now differ from that provider's slot, 1.3.x ran
-     * and saved since (downgrade then re-upgrade): the legacy values are newer.
+     * on every save, and leaves them alone while Burp AI is selected. So if the
+     * legacy values match no provider's slot, 1.3.x ran and saved since (downgrade
+     * then re-upgrade) and they are newer: adopt them for the provider they
+     * belong to. A key that identifies another vendor is never moved (1.3.x keeps
+     * the key field when the provider is switched).
      */
     private void adoptNewerLegacyValues(Settings into) {
-        ProviderId selected = into.provider();
-        if (selected == ProviderId.BURP_AI) {
-            return;
-        }
         String url = prefs.getString(K_LEGACY_API_URL);
         String key = prefs.getString(K_LEGACY_API_KEY);
         String model = prefs.getString(K_LEGACY_MODEL);
         if (url == null && key == null && model == null) {
             return;
         }
-        ProviderConfig legacy = new ProviderConfig(url, selected == ProviderId.OLLAMA ? "" : key, model);
-        if (legacy.equals(into.config(selected))) {
-            return;
+        ProviderId target = into.provider();
+        if (target == ProviderId.BURP_AI) {
+            if (matchesAnySlot(into, url, key, model)) {
+                return;
+            }
+            target = inferLegacyOwner(url, key, model);
+            if (target == null) {
+                if (url == null || url.isBlank()) {
+                    return;
+                }
+                target = ProviderId.OPENAI;
+            }
         }
-        ProviderId owner = inferLegacyOwner(url, key, model);
-        if (owner != null && owner != selected) {
-            return;    // 1.3.x kept another vendor's key in the shared slot; do not move it here
+        if (target == ProviderId.OLLAMA) {
+            ProviderId owner = inferLegacyOwner(url, null, model);   // Ollama ignores the key
+            if (owner != null && owner != ProviderId.OLLAMA) {
+                return;
+            }
+        } else {
+            ProviderId keyOwner = keyVendor(key);
+            if (keyOwner != null && keyOwner != target) {
+                return;
+            }
         }
-        into.setConfig(selected, legacy);
+        String adoptedUrl = url == null || url.isBlank() ? into.config(target).apiUrl() : url;
+        ProviderConfig legacy = new ProviderConfig(adoptedUrl, target == ProviderId.OLLAMA ? "" : key, model);
+        if (!legacy.equals(into.config(target))) {
+            into.setConfig(target, legacy);
+        }
+    }
+
+    private static boolean matchesAnySlot(Settings into, String url, String key, String model) {
+        for (ProviderId p : ProviderId.values()) {
+            if (p == ProviderId.BURP_AI) {
+                continue;
+            }
+            if (new ProviderConfig(url, p == ProviderId.OLLAMA ? "" : key, model).equals(into.config(p))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The vendor an API key's prefix identifies, or null. */
+    static ProviderId keyVendor(String key) {
+        String k = key == null ? "" : key.trim();
+        if (k.startsWith("sk-ant-")) return ProviderId.CLAUDE;
+        if (k.startsWith("AIza")) return ProviderId.GEMINI;
+        if (k.startsWith("sk-")) return ProviderId.OPENAI;
+        return null;
     }
 
     /** The third-party provider the legacy URL / key / model identify, or null. */

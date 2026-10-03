@@ -3,6 +3,7 @@ package com.sn1persecurity.silentchain.bapp.ai.providers;
 import burp.api.montoya.MontoyaApi;
 
 import com.sn1persecurity.silentchain.bapp.ai.AiGate;
+import com.sn1persecurity.silentchain.bapp.ai.AiNotSentException;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
 import com.sn1persecurity.silentchain.bapp.config.Settings.ProviderConfig;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient;
@@ -84,11 +85,11 @@ public class ClaudeProvider implements LlmProvider {
     @Override
     public Optional<String> analyze(String systemPrompt, String userPrompt) {
         if (!aiGate.isEnabled()) {
-            return Optional.empty();
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);
         }
         if (!isConfigured()) {
             api.logging().logToError("Claude: missing API URL or API key.");
-            return Optional.empty();
+            throw new AiNotSentException("Claude is not configured.");
         }
         String model = cfg().model();
         if (model.isBlank()) model = "claude-3-5-sonnet-latest";
@@ -103,6 +104,9 @@ public class ClaudeProvider implements LlmProvider {
         body.put("messages", messages);
 
         HttpReply r = http.postJson(baseUrl() + "/messages", authHeaders(), body.toString());
+        if (r.status() == MontoyaHttpClient.STATUS_AI_DISABLED) {
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);
+        }
         if (!r.ok()) {
             api.logging().logToError("Claude HTTP " + r.status() + ": " + truncate(r.body()));
             return Optional.empty();

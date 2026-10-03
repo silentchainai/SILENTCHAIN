@@ -69,16 +69,17 @@ public final class CredentialRedactor {
     private static final Pattern URL_PAIR = Pattern.compile(
             "([?&#])([^=&;#?/\\s<>\"']{1,100})=([^&#\\s<>\"']*)");
 
-    /** Attribute: name="value", name='value' or name=value (unquoted). */
+    /**
+     * Attribute: name="value", name='value' or name=value (unquoted). Starts only
+     * at the beginning of a name run and never backtracks into it, so a long run
+     * of name characters costs one pass.
+     */
     private static final Pattern ATTRIBUTE = Pattern.compile(
-            "([\\w:.-]{1,100})\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s\"'=<>`]+)");
+            "(?<![\\w:.-])([\\w:.-]++)\\s*+=\\s*+(\"[^\"]*\"|'[^']*'|[^\\s\"'=<>`]++)");
 
     /** Form-control tags whose value may carry a credential named by name/id/property/http-equiv. */
     private static final Set<String> FORM_CONTROL_TAGS = Set.of(
             "input", "meta", "button", "textarea", "option", "select", "param");
-
-    /** Longest start tag examined (attributes beyond this are not parsed). */
-    private static final int MAX_TAG_CHARS = 8_192;
 
     /** name: "value" / name = 'value' / name:\"value\" outside JSON keys (JS, GraphQL, stringified JSON). */
     private static final Pattern NAMED_ASSIGNMENT = Pattern.compile(
@@ -90,7 +91,7 @@ public final class CredentialRedactor {
 
     /** True if a header, parameter, cookie or JSON key with this name carries a credential. */
     public static boolean isCredentialName(String name) {
-        if (name == null || name.isBlank()) {
+        if (name == null || name.isBlank() || name.length() > 300) {
             return false;
         }
         String decoded = urlDecode(name.trim());
@@ -347,7 +348,7 @@ public final class CredentialRedactor {
      * boundary line. Linear: each header line is examined once.
      */
     private static String redactMultipart(String body, Set<String> redactedValues) {
-        String lower = body.toLowerCase(Locale.ROOT);
+        String lower = lowerSameLength(body);
         int n = body.length();
         StringBuilder out = new StringBuilder(n);
         int copied = 0;
@@ -358,7 +359,7 @@ public final class CredentialRedactor {
                 break;
             }
             int lineEnd = lineEnd(body, cd);
-            pos = lineEnd;
+            pos = Math.max(lineEnd, cd + 1);
             int nameAt = findNameAttribute(lower, cd + 20, lineEnd);
             if (nameAt < 0 || cd < copied) {
                 continue;
@@ -381,6 +382,15 @@ public final class CredentialRedactor {
         }
         out.append(body, copied, n);
         return out.toString();
+    }
+
+    /** Lower-case one char at a time so indexes stay aligned with the original text. */
+    private static String lowerSameLength(String s) {
+        char[] chars = s.toCharArray();
+        for (int i = 0; i < chars.length; i++) {
+            chars[i] = Character.toLowerCase(chars[i]);
+        }
+        return new String(chars);
     }
 
     private static int lineEnd(String s, int from) {
@@ -655,7 +665,7 @@ public final class CredentialRedactor {
                 continue;
             }
             int nextLt = text.indexOf('<', nameEnd);
-            int limit = nextLt < 0 ? n : Math.min(nextLt, nameEnd + MAX_TAG_CHARS);
+            int limit = nextLt < 0 ? n : nextLt;     // a start tag never extends past the next '<'
             int tagEnd = endOfStartTag(text, nameEnd, limit);
             String qname = text.substring(nameStart, nameEnd);
             String local = qname.substring(qname.lastIndexOf(':') + 1).toLowerCase(Locale.ROOT);

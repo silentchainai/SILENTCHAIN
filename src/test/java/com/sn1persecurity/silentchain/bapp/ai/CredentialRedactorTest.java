@@ -263,7 +263,10 @@ class CredentialRedactorTest {
                 "<tokenA".repeat(9_000),
                 "\"a\":".repeat(13_000),
                 "\"x\\".repeat(16_000),
-                "<a ".repeat(20_000)};
+                "<a ".repeat(20_000),
+                "<input " + "a".repeat(65_000),
+                "<x " + "a".repeat(65_000) + "<",
+                "\u0130".repeat(20) + "Content-Disposition:\n" + "\u0130".repeat(20) + "content-disposition:\r\n"};
         for (String body : hostile) {
             long start = System.nanoTime();
             CredentialRedactor.redactRequestBody(body, "multipart/form-data", null);
@@ -271,5 +274,13 @@ class CredentialRedactorTest {
             long millis = (System.nanoTime() - start) / 1_000_000;
             assertTrue(millis < 500, "took " + millis + " ms on " + body.substring(0, 20));
         }
+    }
+
+    @Test
+    void longStartTagsAreParsedWhole() {
+        String html = "<input name=\"csrf_token\"" + " ".repeat(9_000) + "value=\"S-LONG\"><p>hi</p>";
+        String out = CredentialRedactor.redactResponseBody(html, "text/html");
+        assertNoLeak(out, "S-LONG");
+        assertTrue(out.endsWith("<p>hi</p>"));
     }
 }

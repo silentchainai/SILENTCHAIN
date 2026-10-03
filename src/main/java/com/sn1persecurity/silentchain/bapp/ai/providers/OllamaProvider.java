@@ -3,6 +3,7 @@ package com.sn1persecurity.silentchain.bapp.ai.providers;
 import burp.api.montoya.MontoyaApi;
 
 import com.sn1persecurity.silentchain.bapp.ai.AiGate;
+import com.sn1persecurity.silentchain.bapp.ai.AiNotSentException;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
 import com.sn1persecurity.silentchain.bapp.config.Settings.StructuredOutput;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient;
@@ -100,7 +101,7 @@ public class OllamaProvider implements LlmProvider {
     @Override
     public Optional<String> analyze(String systemPrompt, String userPrompt) {
         if (!aiGate.isEnabled()) {
-            return Optional.empty();
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);
         }
         String model = resolveModel();
         if (model.isBlank()) {
@@ -112,6 +113,9 @@ public class OllamaProvider implements LlmProvider {
                 settings.ollamaStructuredOutput(), KEEP_ALIVE);
 
         HttpReply r = http.postJson(baseUrl() + CHAT_ENDPOINT, Collections.emptyMap(), body.toString());
+        if (r.status() == MontoyaHttpClient.STATUS_AI_DISABLED) {
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);
+        }
         if (!r.ok()) {
             api.logging().logToError("Ollama HTTP " + r.status() + ": " + r.body());
             return Optional.empty();
@@ -306,6 +310,9 @@ public class OllamaProvider implements LlmProvider {
             return model;
         }
         List<String> installed = listModels();
+        if (installed.isEmpty() && !aiGate.isEnabled()) {
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);   // switched off during the lookup
+        }
         if (installed.isEmpty()) {
             api.logging().logToError("Ollama: no model configured and none installed at " + baseUrl()
                     + ". Pull one (e.g. `ollama pull qwen2.5-coder:7b`) and select it in "

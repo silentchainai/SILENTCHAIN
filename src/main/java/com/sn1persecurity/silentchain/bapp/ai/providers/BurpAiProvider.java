@@ -8,6 +8,7 @@ import burp.api.montoya.ai.chat.PromptResponse;
 import burp.api.montoya.logging.Logging;
 
 import com.sn1persecurity.silentchain.bapp.ai.AiGate;
+import com.sn1persecurity.silentchain.bapp.ai.AiNotSentException;
 
 import java.util.List;
 import java.util.Optional;
@@ -49,7 +50,7 @@ public class BurpAiProvider implements LlmProvider {
     @Override
     public Optional<String> analyze(String systemPrompt, String userPrompt) {
         if (!aiGate.isEnabled()) {
-            return Optional.empty();
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);
         }
         try {
             Prompt prompt = api.ai().prompt();
@@ -72,9 +73,12 @@ public class BurpAiProvider implements LlmProvider {
         if (!aiGate.isEnabled()) {
             return TestResult.fail(AiGate.DISABLED_MESSAGE);
         }
-        Optional<String> reply = analyze(
-                "Reply with the literal string OK and nothing else.",
-                "ping");
+        Optional<String> reply;
+        try {
+            reply = analyze("Reply with the literal string OK and nothing else.", "ping");
+        } catch (AiNotSentException e) {
+            return TestResult.fail(e.getMessage());
+        }
         if (reply.isEmpty()) {
             return TestResult.fail("Burp AI returned no content (check your Burp AI credits).");
         }

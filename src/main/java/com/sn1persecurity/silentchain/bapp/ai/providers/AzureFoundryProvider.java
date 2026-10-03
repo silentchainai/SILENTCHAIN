@@ -3,6 +3,7 @@ package com.sn1persecurity.silentchain.bapp.ai.providers;
 import burp.api.montoya.MontoyaApi;
 
 import com.sn1persecurity.silentchain.bapp.ai.AiGate;
+import com.sn1persecurity.silentchain.bapp.ai.AiNotSentException;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
 import com.sn1persecurity.silentchain.bapp.config.Settings.ProviderConfig;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient;
@@ -72,11 +73,11 @@ public class AzureFoundryProvider implements LlmProvider {
     @Override
     public Optional<String> analyze(String systemPrompt, String userPrompt) {
         if (!aiGate.isEnabled()) {
-            return Optional.empty();
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);
         }
         if (!isConfigured()) {
             api.logging().logToError("Azure Foundry: missing URL / key / deployment / api-version.");
-            return Optional.empty();
+            throw new AiNotSentException("Azure Foundry is not configured.");
         }
         ProviderConfig cfg = cfg();
 
@@ -96,6 +97,9 @@ public class AzureFoundryProvider implements LlmProvider {
         Map<String, String> headers = Map.of("api-key", cfg.apiKey());
 
         HttpReply r = http.postJson(url, headers, body.toString());
+        if (r.status() == MontoyaHttpClient.STATUS_AI_DISABLED) {
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);
+        }
         if (!r.ok()) {
             api.logging().logToError("Azure HTTP " + r.status() + ": " + truncate(r.body()));
             return Optional.empty();
@@ -121,9 +125,12 @@ public class AzureFoundryProvider implements LlmProvider {
         if (cfg().model().isBlank()) return TestResult.fail("Azure deployment name is empty.");
 
         // Minimal round-trip via a one-token prompt.
-        Optional<String> reply = analyze(
-                "Reply with the literal string OK and nothing else.",
-                "ping");
+        Optional<String> reply;
+        try {
+            reply = analyze("Reply with the literal string OK and nothing else.", "ping");
+        } catch (AiNotSentException e) {
+            return TestResult.fail(e.getMessage());
+        }
         if (reply.isEmpty()) {
             return TestResult.fail("Azure deployment did not return content. Check URL, key, deployment name, and api-version.");
         }

@@ -207,4 +207,61 @@ class SettingsPersistenceTest {
 
         assertEquals("unidentifiable-key", store.get("String:silentchain.apiKey"));
     }
+
+    /** 1.3.x keeps the key on a provider switch and writes the new provider's default URL. */
+    @Test
+    void anotherVendorsKeyIsNotMovedEvenWithTheSelectedVendorsUrl() {
+        Map<String, Object> store = new HashMap<>();
+        store.put("String:silentchain.provider", "OPENAI");
+        store.put("String:silentchain.apiUrl", "https://api.openai.com/v1");
+        store.put("String:silentchain.apiKey", "sk-ant-CLAUDE-A");
+        store.put("String:silentchain.model", "claude-3-5-sonnet-latest");
+        store.put("String:silentchain.provider.OPENAI.apiUrl", "https://api.openai.com/v1");
+        store.put("String:silentchain.provider.OPENAI.apiKey", "sk-proj-OPENAI-B");
+        store.put("String:silentchain.provider.OPENAI.model", "gpt-4o");
+        SettingsPersistence persistence = new SettingsPersistence(preferences(store));
+
+        Settings s = new Settings();
+        persistence.load(s);
+        persistence.save(s);
+
+        assertEquals("sk-proj-OPENAI-B", s.config(ProviderId.OPENAI).apiKey());
+        assertEquals("sk-proj-OPENAI-B", store.get("String:silentchain.provider.OPENAI.apiKey"));
+    }
+
+    @Test
+    void ollamaAdoptsNewerUrlAndModelWhateverKeyIsLeftInTheSharedSlot() {
+        Map<String, Object> store = new HashMap<>();
+        store.put("String:silentchain.provider", "OLLAMA");
+        store.put("String:silentchain.apiUrl", "http://gpu.lan:8000");
+        store.put("String:silentchain.apiKey", "sk-proj-x");
+        store.put("String:silentchain.model", "qwen2.5-coder:14b");
+        store.put("String:silentchain.provider.OLLAMA.apiUrl", "http://gpu.lan:8000");
+        store.put("String:silentchain.provider.OLLAMA.model", "llama3.1:8b");
+
+        Settings s = new Settings();
+        new SettingsPersistence(preferences(store)).load(s);
+
+        assertEquals(new ProviderConfig("http://gpu.lan:8000", "", "qwen2.5-coder:14b"), s.config(ProviderId.OLLAMA));
+    }
+
+    /** Re-upgrade with Burp AI selected: a key rotated in 1.3.x reaches its provider, keeping the slot's URL. */
+    @Test
+    void reUpgradeWithBurpAiSelectedAdoptsTheRotatedKey() {
+        Map<String, Object> store = new HashMap<>();
+        store.put("String:silentchain.provider", "BURP_AI");
+        store.put("String:silentchain.apiUrl", "");
+        store.put("String:silentchain.apiKey", "sk-rotated-in-1.3");
+        store.put("String:silentchain.model", "gpt-4o");
+        store.put("String:silentchain.provider.OPENAI.apiUrl", "https://api.openai.com/v1");
+        store.put("String:silentchain.provider.OPENAI.apiKey", "sk-old-revoked");
+        store.put("String:silentchain.provider.OPENAI.model", "gpt-4o");
+
+        Settings s = new Settings();
+        new SettingsPersistence(preferences(store)).load(s);
+
+        assertEquals(new ProviderConfig("https://api.openai.com/v1", "sk-rotated-in-1.3", "gpt-4o"),
+                s.config(ProviderId.OPENAI));
+        assertEquals(ProviderId.BURP_AI, s.provider());
+    }
 }

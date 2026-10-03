@@ -47,7 +47,10 @@ public interface LlmProvider {
     /**
      * Submit a system+user prompt and return the raw AI response content
      * (NOT yet parsed by {@link com.sn1persecurity.silentchain.bapp.ai.ResponseParser}).
-     * Empty if the call failed, returned nothing, or AI is disabled.
+     * Empty if the request was sent but failed or returned nothing.
+     *
+     * @throws com.sn1persecurity.silentchain.bapp.ai.AiNotSentException if nothing
+     *         was sent (AI disabled for the extension, or the provider not configured)
      */
     Optional<String> analyze(String systemPrompt, String userPrompt);
 

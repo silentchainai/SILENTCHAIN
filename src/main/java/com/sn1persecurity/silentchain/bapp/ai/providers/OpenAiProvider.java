@@ -3,6 +3,7 @@ package com.sn1persecurity.silentchain.bapp.ai.providers;
 import burp.api.montoya.MontoyaApi;
 
 import com.sn1persecurity.silentchain.bapp.ai.AiGate;
+import com.sn1persecurity.silentchain.bapp.ai.AiNotSentException;
 import com.sn1persecurity.silentchain.bapp.config.Settings;
 import com.sn1persecurity.silentchain.bapp.config.Settings.ProviderConfig;
 import com.sn1persecurity.silentchain.bapp.net.MontoyaHttpClient;
@@ -81,11 +82,11 @@ public class OpenAiProvider implements LlmProvider {
     @Override
     public Optional<String> analyze(String systemPrompt, String userPrompt) {
         if (!aiGate.isEnabled()) {
-            return Optional.empty();
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);
         }
         if (!isConfigured()) {
             api.logging().logToError("OpenAI: missing API URL or API key.");
-            return Optional.empty();
+            throw new AiNotSentException("OpenAI is not configured.");
         }
         ProviderConfig cfg = cfg();
         String model = cfg.model();
@@ -104,6 +105,9 @@ public class OpenAiProvider implements LlmProvider {
         Map<String, String> headers = MontoyaHttpClient.bearer(cfg.apiKey());
 
         HttpReply r = http.postJson(baseUrl() + "/chat/completions", headers, body.toString());
+        if (r.status() == MontoyaHttpClient.STATUS_AI_DISABLED) {
+            throw new AiNotSentException(AiGate.DISABLED_MESSAGE);
+        }
         if (!r.ok()) {
             api.logging().logToError("OpenAI HTTP " + r.status() + ": " + truncate(r.body()));
             return Optional.empty();

@@ -93,7 +93,7 @@ class AiGatingTest {
         LlmProvider direct = dispatcher.current();
         assertTrue(direct.isConfigured());
         assertFalse(direct.isAvailable());
-        assertTrue(direct.analyze("system", "user").isEmpty());
+        assertThrows(AiNotSentException.class, () -> direct.analyze("system", "user"));
         direct.listModels();
         TestResult viaProvider = direct.testConnection();
         assertFalse(viaProvider.success());
@@ -131,7 +131,7 @@ class AiGatingTest {
         settings.setConfig(ProviderId.OLLAMA, new ProviderConfig("http://localhost:11434", "", ""));
 
         // No model configured: analyze() would otherwise call GET /api/tags to pick one.
-        assertTrue(dispatcherFor(settings).current().analyze("system", "user").isEmpty());
+        assertThrows(AiNotSentException.class, () -> dispatcherFor(settings).current().analyze("system", "user"));
         assertEquals(0, sendRequests.get());
     }
 
@@ -158,5 +158,35 @@ class AiGatingTest {
         s.setConfig(ProviderId.AZURE_FOUNDRY, new ProviderConfig("https://x.openai.azure.com", "k",
                 "<html><img src='http://evil/x'>"));
         assertTrue(dispatcherFor(s).listModels(ProviderId.AZURE_FOUNDRY).isEmpty());
+    }
+
+    /**
+     * AI switched off between the dispatcher's check and the provider's request:
+     * the provider (or the egress block) must report "not sent", not an empty reply.
+     */
+    @ParameterizedTest
+    @EnumSource(ProviderId.class)
+    void aiSwitchedOffMidCallIsReportedAsNotSent(ProviderId provider) {
+        java.util.concurrent.atomic.AtomicInteger checks = new java.util.concurrent.atomic.AtomicInteger();
+        AiGate flipping = new AiGate(() -> checks.incrementAndGet() <= 1, m -> { });   // only the first check passes
+        Settings settings = configured(provider);
+        AiDispatcher dispatcher = new AiDispatcher(api, new MontoyaHttpClient(api, flipping, settings), settings, flipping);
+
+        assertThrows(AiNotSentException.class, () -> dispatcher.analyze("system", "user"));
+        assertEquals(0, sendRequests.get());
+        assertEquals(0, burpAiPrompts.get());
+    }
+
+    /** Switched off after the provider's own check: the egress block must still report "not sent". */
+    @ParameterizedTest
+    @EnumSource(value = ProviderId.class, names = {"OLLAMA", "OPENAI", "CLAUDE", "GEMINI", "AZURE_FOUNDRY"})
+    void aiSwitchedOffAtTheEgressPointIsReportedAsNotSent(ProviderId provider) {
+        java.util.concurrent.atomic.AtomicInteger checks = new java.util.concurrent.atomic.AtomicInteger();
+        AiGate flipping = new AiGate(() -> checks.incrementAndGet() <= 2, m -> { });   // dispatcher + provider pass
+        Settings settings = configured(provider);
+        AiDispatcher dispatcher = new AiDispatcher(api, new MontoyaHttpClient(api, flipping, settings), settings, flipping);
+
+        assertThrows(AiNotSentException.class, () -> dispatcher.analyze("system", "user"));
+        assertEquals(0, sendRequests.get());
     }
 }
